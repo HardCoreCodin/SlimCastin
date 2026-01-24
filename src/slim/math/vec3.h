@@ -397,7 +397,7 @@ vec3 vec3::Y{0, 1, 0};
 vec3 vec3::Z{0, 0, 1};
 
 INLINE_XPU vec3 absolute(const vec3 &a) {
-    return {abs(a.x), abs(a.y), abs(a.z)};
+    return {fabsf(a.x), fabsf(a.y), fabsf(a.z)};
 }
 
 INLINE_XPU vec3 minimum(const vec3 &a, const vec3 &b) {

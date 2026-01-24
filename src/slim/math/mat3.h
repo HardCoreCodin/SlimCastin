@@ -3,14 +3,7 @@
 #include "./vec3.h"
 
 struct mat3 {
-    union {
-        struct {
-            vec3 X, Y, Z;
-        };
-        struct {
-            vec3 right, up, forward;
-        };
-    };
+    vec3 X, Y, Z;
 
     INLINE_XPU mat3() noexcept :
         X{1.0f, 0.0f, 0.0f},

@@ -62,58 +62,6 @@ namespace ray_cast_renderer {
         uploadWallHits(wall_hits, screen_width);
     }
 
-    //
-    // void draw(u16 screen_width, u16 screen_height, vec2 position) {
-    //     TextureMip* wall_texture;
-    //
-    //     u32 last_line = screen_width * (screen_height - 1);
-    //     f32 u, v, dim_factor;
-    //     vec2 pos;
-    //     GroundHit ground_hit;
-    //     WallHit wall_hit;
-    //     for (u16 x = 0; x < screen_width; x++) {
-    //         wall_hit = wall_hits[x];
-    //         wall_texture = &settings.textures.data[wall_hit.texture_id].mips[wall_hit.mip];
-    //
-    //         for (u16 y = 0; y <= wall_hit.top; y++) {
-    //             ground_hit = ground_hits[y];
-    //
-    //             pos = position + wall_hit.ray_direction * ground_hit.z;
-    //             if (!(inRange(0.0f, pos.x, (f32)(tile_map.width - 1)) &&
-    //                   inRange(0.0f, pos.y, (f32)(tile_map.height - 1))))
-    //                 continue;
-    //
-    //             u = pos.x - (f32)(i32)pos.x;
-    //             v = pos.y - (f32)(i32)pos.y;
-    //
-    //             dim_factor = 0.25f + ground_hit.z * ground_hit.z;
-    //             dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
-    //             dim_factor = 1.5f / dim_factor;
-    //             viewport.canvas.pixels[            screen_width * y + x] = settings.textures[settings.ceiling_texture_id].mips[ground_hit.mip].sample(u, v) * dim_factor;
-    //             viewport.canvas.pixels[last_line - screen_width * y + x] = settings.textures[settings.floor_texture_id].mips[ground_hit.mip].sample(u, v) * dim_factor;
-    //         }
-    //
-    //         u = wall_hit.u;
-    //         for (u16 y = 0; y < wall_hit.height; y++) {
-    //             dim_factor = 0.25f + wall_hit.z * wall_hit.z;
-    //             dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
-    //             dim_factor = 1.5f / dim_factor;
-    //             v = wall_hit.v + (f32)y * wall_hit.texel_step;
-    //             u32 offset = (u32)screen_width * (u32)(wall_hit.top + y) + (u32)x;
-    //             viewport.canvas.pixels[offset] = wall_texture->sample(u, v) * dim_factor;
-    //         }
-    //     }
-    // }
-
-    void onResize(u16 width, u16 height, f32 focal_length, const TileMap& tile_map) {
-        screen_width = width;
-        half_screen_height = height >> 1;
-        screen_height = half_screen_height << 1;
-
-        generateFloorAndCeilingHits(focal_length);
-        generateWallHits(focal_length, tile_map);
-    }
-
     void onMove(const Camera& camera, TileMap& tile_map) {
         position = vec2(camera.position.x, camera.position.z);
 
@@ -121,16 +69,23 @@ namespace ray_cast_renderer {
     }
 
     void onMoveOrTurn(const Camera& camera, const TileMap& tile_map) {
-        forward = vec2(camera.orientation.forward.x, camera.orientation.forward.z).normalized();
-        right = vec2(camera.orientation.right.x, camera.orientation.right.z).normalized() * ((f32)screen_width / (f32)screen_height);
+        forward = vec2(camera.orientation.Z.x, camera.orientation.Z.z).normalized();
+        right = vec2(camera.orientation.X.x, camera.orientation.X.z).normalized() * ((f32)screen_width / (f32)screen_height);
 
         generateWallHits(camera.focal_length, tile_map);
     }
 
+    void onResize(u16 width, u16 height, const Camera& camera, const TileMap& tile_map) {
+        screen_width = width;
+        half_screen_height = height >> 1;
+        screen_height = half_screen_height << 1;
+
+        generateFloorAndCeilingHits(camera.focal_length);
+        onMoveOrTurn(camera, tile_map);
+    }
+
     void renderOnCPU(Canvas &canvas) {
-        canvas.clear(1.0f, 0.0f, 1.0f, 1.0f);
-//         draw(screen_width, screen_height, position);
-// return;
+        // canvas.clear(1.0f, 0.0f, 1.0f, 1.0f);
         const vec2 tile_map_end = vec2((f32)(settings->tile_map_width - 1), (f32)(settings->tile_map_height - 1));
 
         for (u16 x = 0; x < screen_width; x++) {
@@ -158,9 +113,8 @@ namespace ray_cast_renderer {
         texel_size = 1.0f / (f32)texture.width;
         last_mip = (u8)(texture.mip_count - 1);
 
-        onResize(dim.width, dim.height, camera.focal_length, tile_map);
         onMove(camera, tile_map);
-        onMoveOrTurn(camera, tile_map);
+        onResize(dim.width, dim.height, camera, tile_map);
     }
 
     void render(Canvas &canvas, bool use_GPU = false) {

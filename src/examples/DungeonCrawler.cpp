@@ -206,7 +206,8 @@ struct DungeonCrawler : SlimApp {
         viewport.updateDimensions(width, height);
         canvas.dimensions.update(width, height);
 
-    	if (!initted) {
+    	if (initted) ray_cast_renderer::onResize(width, height, *viewport.camera, tile_map);
+    	else {
     		initted = true;
 
     		// F->bottom.portal_to = &T->right;
@@ -220,8 +221,6 @@ struct DungeonCrawler : SlimApp {
 
     		ray_cast_renderer::init(&settings, viewport.dimensions, *viewport.camera, tile_map);
     	}
-
-    	ray_cast_renderer::onResize(width, height, viewport.camera->focal_length, tile_map);
     }
 
     void OnMouseButtonDown(mouse::Button &mouse_button) override {
