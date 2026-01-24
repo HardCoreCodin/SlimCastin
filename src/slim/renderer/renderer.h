@@ -8,63 +8,25 @@
 #include "./renderer_GPU.h"
 #else
 #define USE_GPU_BY_DEFAULT false
-void initDataOnGPU(const TileMap &tile_map) {}
-void uploadTileMap(const TileMap &tile_map) {}
+void initDataOnGPU(const RayCasterSettings& settings) {}
+void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
+void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
 #endif
 
-struct RayCastingRenderer {
-    RayCasterSettings& settings;
-    const Viewport& viewport;
-    TileMap &tile_map;
-    // const Camera &camera;
-    // CameraRayProjection &projection;
-    // Ray ray;
-    // RayHit hit;
-    // Color color;
-    // f32 depth;
-
-    explicit RayCastingRenderer(
-        RayCasterSettings& settings,
-        const Viewport& viewport,
-        TileMap &tile_map) :
-        settings{settings},
-        viewport{viewport},
-        tile_map{tile_map}
-    {
-
-        // initDataOnGPU(tile_map);
-    }
-
-    void render(bool update_scene = true, bool use_GPU = false) {
-        // const Camera &camera = *viewport.camera;
-        // const Canvas &canvas = viewport.canvas;
-
-        // ray.origin = camera.position;
-
-        //         if (update_scene) {
-        //             //
-        //             if (use_GPU) {
-        //                 uploadTileMap(tileMap);
-        //             }
-        //         }
-        // #ifdef __CUDACC__
-        //         if (use_GPU) renderOnGPU(canvas, projection, settings);
-        //         else         renderOnCPU(canvas);
-        // #else
-        renderOnCPU();
-        // #endif
-    }
+WallHit wall_hits[MAX_WALL_HITS_COUNT];
+GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
 
 
+namespace ray_cast_renderer {
+    const RayCasterSettings* settings;
 
+    vec2 position, forward, right;
+    u16 half_screen_height, screen_height, screen_width;
+    f32 texel_size;
+    u8 last_mip;
 
-    WallHit wall_hits[1024*5];
-    GroundHit ground_hits[1024*2];
-
-
-    void generateFloorAndCeilingHits(const u16 screen_height, f32 focal_length, const f32 texel_size, const u8 last_mip) {
+    void generateFloorAndCeilingHits(f32 focal_length) {
         focal_length *= 0.5f;
-        u16 half_screen_height = screen_height >> 1;
         f32 screen_pixel_height = 1.0f / (f32)half_screen_height;
 
         f32 Y, Z, priorZ = 0.0f;
@@ -74,14 +36,15 @@ struct RayCastingRenderer {
             Y = (f32)y * screen_pixel_height;
             Z = Y * focal_length / (1.0f - Y);
 
-            ground_hits[y].mip = computeMip(Z - priorZ, texel_size, last_mip);
+            ground_hits[y].mip = computeMip((Z - priorZ) * 0.5f, texel_size, last_mip);
             ground_hits[y].z = Z + focal_length;
 
             priorZ = Z;
         }
+        uploadGroundHits(ground_hits, half_screen_height);
     }
 
-    void generateWallHits(u16 screen_width, u16 screen_height, f32 focal_length, u8 last_mip, f32 texel_size, vec2 position, vec2 forward, vec2 right) {
+    void generateWallHits(f32 focal_length, const TileMap& tile_map) {
         vec2 right_step = right / (f32)screen_width;
         vec2 ray_direction = focal_length * forward + right_step * (0.5f - 0.5f * (f32)screen_width);
 
@@ -93,76 +56,119 @@ struct RayCastingRenderer {
         for (u16 x = 0; x < screen_width; x++, ray_direction += right_step) {
             ray.update(position, ray_direction, forward);
             ray.cast(tile_map);
-            wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray.direction, ray.hit);
+            wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, ray.hit);
             wall_hits[x] = wall_hit;
         }
+        uploadWallHits(wall_hits, screen_width);
     }
 
-    void draw(u16 screen_width, u16 screen_height, vec2 position) {
-        TextureMip* wall_texture;
+    //
+    // void draw(u16 screen_width, u16 screen_height, vec2 position) {
+    //     TextureMip* wall_texture;
+    //
+    //     u32 last_line = screen_width * (screen_height - 1);
+    //     f32 u, v, dim_factor;
+    //     vec2 pos;
+    //     GroundHit ground_hit;
+    //     WallHit wall_hit;
+    //     for (u16 x = 0; x < screen_width; x++) {
+    //         wall_hit = wall_hits[x];
+    //         wall_texture = &settings.textures.data[wall_hit.texture_id].mips[wall_hit.mip];
+    //
+    //         for (u16 y = 0; y <= wall_hit.top; y++) {
+    //             ground_hit = ground_hits[y];
+    //
+    //             pos = position + wall_hit.ray_direction * ground_hit.z;
+    //             if (!(inRange(0.0f, pos.x, (f32)(tile_map.width - 1)) &&
+    //                   inRange(0.0f, pos.y, (f32)(tile_map.height - 1))))
+    //                 continue;
+    //
+    //             u = pos.x - (f32)(i32)pos.x;
+    //             v = pos.y - (f32)(i32)pos.y;
+    //
+    //             dim_factor = 0.25f + ground_hit.z * ground_hit.z;
+    //             dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
+    //             dim_factor = 1.5f / dim_factor;
+    //             viewport.canvas.pixels[            screen_width * y + x] = settings.textures[settings.ceiling_texture_id].mips[ground_hit.mip].sample(u, v) * dim_factor;
+    //             viewport.canvas.pixels[last_line - screen_width * y + x] = settings.textures[settings.floor_texture_id].mips[ground_hit.mip].sample(u, v) * dim_factor;
+    //         }
+    //
+    //         u = wall_hit.u;
+    //         for (u16 y = 0; y < wall_hit.height; y++) {
+    //             dim_factor = 0.25f + wall_hit.z * wall_hit.z;
+    //             dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
+    //             dim_factor = 1.5f / dim_factor;
+    //             v = wall_hit.v + (f32)y * wall_hit.texel_step;
+    //             u32 offset = (u32)screen_width * (u32)(wall_hit.top + y) + (u32)x;
+    //             viewport.canvas.pixels[offset] = wall_texture->sample(u, v) * dim_factor;
+    //         }
+    //     }
+    // }
 
-        u32 last_line = screen_width * (screen_height - 1);
-        f32 u, v, dim_factor;
-        vec2 pos;
-        GroundHit ground_hit;
-        WallHit wall_hit;
+    void onResize(u16 width, u16 height, f32 focal_length, const TileMap& tile_map) {
+        screen_width = width;
+        half_screen_height = height >> 1;
+        screen_height = half_screen_height << 1;
+
+        generateFloorAndCeilingHits(focal_length);
+        generateWallHits(focal_length, tile_map);
+    }
+
+    void onMove(const Camera& camera, TileMap& tile_map) {
+        position = vec2(camera.position.x, camera.position.z);
+
+        moveTileMap(tile_map, position);
+    }
+
+    void onMoveOrTurn(const Camera& camera, const TileMap& tile_map) {
+        forward = vec2(camera.orientation.forward.x, camera.orientation.forward.z).normalized();
+        right = vec2(camera.orientation.right.x, camera.orientation.right.z).normalized() * ((f32)screen_width / (f32)screen_height);
+
+        generateWallHits(camera.focal_length, tile_map);
+    }
+
+    void renderOnCPU(Canvas &canvas) {
+        canvas.clear(1.0f, 0.0f, 1.0f, 1.0f);
+//         draw(screen_width, screen_height, position);
+// return;
+        const vec2 tile_map_end = vec2((f32)(settings->tile_map_width - 1), (f32)(settings->tile_map_height - 1));
+
         for (u16 x = 0; x < screen_width; x++) {
-            wall_hit = wall_hits[x];
-            wall_texture = &settings.wall_textures.data[wall_hit.texture_id].mips[wall_hit.mip];
+            WallHit wall_hit = wall_hits[x];
+            for (u16 y = 0; y < half_screen_height; y++) {
+                GroundHit ground_hit = ground_hits[y];
 
-            for (u16 y = 0; y <= wall_hit.top; y++) {
-                ground_hit = ground_hits[y];
-
-                pos = position + wall_hit.ray_direction * ground_hit.z;
-                if (!(inRange(0.0f, pos.x, (f32)(tile_map.width - 1)) &&
-                      inRange(0.0f, pos.y, (f32)(tile_map.height - 1))))
-                    continue;
-
-                u = pos.x - (f32)(i32)pos.x;
-                v = pos.y - (f32)(i32)pos.y;
-
-                dim_factor = 0.25f + ground_hit.z * ground_hit.z;
-                dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
-                dim_factor = 1.5f / dim_factor;
-                viewport.canvas.pixels[            screen_width * y + x] = settings.ceiling_texture->mips[ground_hit.mip].sample(u, v) * dim_factor;
-                viewport.canvas.pixels[last_line - screen_width * y + x] = settings.floor_texture->mips[ground_hit.mip].sample(u, v) * dim_factor;
-            }
-
-            u = wall_hit.u;
-            for (u16 y = 0; y < wall_hit.height; y++) {
-                dim_factor = 0.25f + wall_hit.z * wall_hit.z;
-                dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
-                dim_factor = 1.5f / dim_factor;
-                v = wall_hit.v + (f32)y * wall_hit.texel_step;
-                u32 offset = (u32)screen_width * (u32)(wall_hit.top + y) + (u32)x;
-                viewport.canvas.pixels[offset] = wall_texture->sample(u, v) * dim_factor;
+                renderPixel(x, y, position, tile_map_end,
+                    canvas.pixels, screen_width, screen_height,
+                    wall_hit, ground_hit,
+                    settings->textures,
+                    settings->ceiling_texture_id,
+                    settings->floor_texture_id);
             }
         }
     }
 
-    void renderOnCPU() {
-        vec2 position = {viewport.camera->position.x, viewport.camera->position.z};
-        if (viewport.navigation.moved) moveTileMap(tile_map, position);
+    void init(const RayCasterSettings* render_settings, const Dimensions& dim, const Camera& camera, TileMap& tile_map)
+    {
+        settings = render_settings;
 
+        initDataOnGPU(*settings);
 
-        const u16 screen_width = viewport.dimensions.width;
-        const u16 screen_height = viewport.dimensions.height;
-        const f32 focal_length = viewport.camera->focal_length;
-        const u8 last_mip = settings.mip_count - 1;
-        const f32 texel_size = 1.0f / (f32)settings.ceiling_texture->width;
-        const vec2 forward = vec2(viewport.camera->orientation.forward.x, viewport.camera->orientation.forward.z).normalized();
-        const vec2 right = vec2(viewport.camera->orientation.right.x, viewport.camera->orientation.right.z).normalized();
+        Texture &texture{settings->textures[0]};
+        texel_size = 1.0f / (f32)texture.width;
+        last_mip = (u8)(texture.mip_count - 1);
 
-        generateFloorAndCeilingHits(screen_height, focal_length, texel_size, last_mip);
-        generateWallHits(screen_width, screen_height, focal_length, last_mip, texel_size, position, forward, right);
+        onResize(dim.width, dim.height, camera.focal_length, tile_map);
+        onMove(camera, tile_map);
+        onMoveOrTurn(camera, tile_map);
+    }
 
-        viewport.canvas.clear(1.0f, 0.0f, 1.0f, 1.0f);
-        // draw(screen_width, screen_height, position);
-// return;
-        for (u16 x = 0; x < screen_width; x++)
-            for (u16 y = 0; y < screen_height; y++)
-                renderPixel(x, y, position,
-                    viewport.canvas.pixels, screen_width, screen_height, tile_map.width, tile_map.height,
-                    wall_hits, ground_hits, settings.wall_textures.data, settings.floor_texture, settings.ceiling_texture);
+    void render(Canvas &canvas, bool use_GPU = false) {
+        #ifdef __CUDACC__
+        if (use_GPU) renderOnGPU(canvas, position);
+        else         renderOnCPU(canvas);
+        #else
+        renderOnCPU(canvas);
+        #endif
     }
 };

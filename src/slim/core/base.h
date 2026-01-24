@@ -1085,12 +1085,12 @@ struct Grid {
     Slice<CellType> _cells;
     Slice<Slice<CellType>> _rows;
     Slice<Slice<CellType>> cells;
-    i32 width, height, size;
+    u16 width, height, size;
 };
 
 
 template <typename CellType>
-void resizeGrid(Grid<CellType>& grid, i32 width, i32 height) {
+void resizeGrid(Grid<CellType>& grid, u16 width, u16 height) {
     grid.width = width;
     grid.height = height;
     grid.size = width * height;
@@ -1108,7 +1108,7 @@ void resizeGrid(Grid<CellType>& grid, i32 width, i32 height) {
 
 
 template <typename CellType>
-void initGrid(Grid<CellType>& grid, i32 width, i32 height, Slice<CellType> cells) {
+void initGrid(Grid<CellType>& grid, u16 width, u16 height, Slice<CellType> cells) {
     setSliceToOtherSlice(grid._cells, cells);
     resizeGrid<CellType>(grid, width, height);
 }

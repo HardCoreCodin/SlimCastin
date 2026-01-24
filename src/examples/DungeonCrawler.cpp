@@ -138,11 +138,10 @@ struct DungeonCrawler : SlimApp {
 	Canvas canvas;
 	Viewport viewport{canvas, &camera};
 
-	TileMap tilemap;
-	Slice<Texture> wall_textures_slice{floor_textures, Floor_TextureCount};
+	TileMap tile_map;
+	Slice<Texture> textures_slice{textures, Texture_Count};
 
-	RayCasterSettings settings{wall_textures_slice, floor_textures, floor_textures+1};
-	RayCastingRenderer renderer{settings, viewport, tilemap};
+	RayCasterSettings settings;
 
 	bool initted = false;
 
@@ -151,11 +150,18 @@ struct DungeonCrawler : SlimApp {
         FPS.value = fps;
         FPS.value_color = fps >= 60 ? Green : (fps >= 24 ? Cyan : (fps < 12 ? Red : Yellow));
 
-        if (!controls::is_pressed::alt) viewport.updateNavigation(delta_time);
+		bool tile_map_changed = false;
+
+        if (!controls::is_pressed::alt) {
+	        viewport.updateNavigation(delta_time);
+        	if (viewport.navigation.moved || tile_map_changed) ray_cast_renderer::onMove(*viewport.camera, tile_map);
+        	if (viewport.navigation.moved || tile_map_changed ||
+	            viewport.navigation.turned) ray_cast_renderer::onMoveOrTurn(camera, tile_map);
+        }
     }
 
     void OnRender() override {
-        renderer.render(true, use_gpu);
+        ray_cast_renderer::render(canvas, use_gpu);
 
         if (hud.enabled)
             drawHUD(hud, canvas);
@@ -171,12 +177,12 @@ struct DungeonCrawler : SlimApp {
                 antialias = !antialias;
                 canvas.antialias = antialias ? SSAA : NoAA;
             }
-            if (key == '1') renderer.settings.render_mode = RenderMode_Beauty;
-            if (key == '2') renderer.settings.render_mode = RenderMode_Depth;
-            if (key == '3') renderer.settings.render_mode = RenderMode_MipLevel;
-            if (key == '4') renderer.settings.render_mode = RenderMode_UVs;
+            if (key == '1') settings.render_mode = RenderMode_Beauty;
+            if (key == '2') settings.render_mode = RenderMode_Depth;
+            if (key == '3') settings.render_mode = RenderMode_MipLevel;
+            if (key == '4') settings.render_mode = RenderMode_UVs;
             const char* mode;
-            switch (renderer.settings.render_mode) {
+            switch (settings.render_mode) {
                 case RenderMode_Beauty:    mode = "Beauty"; break;
                 case RenderMode_Depth:     mode = "Depth"; break;
                 case RenderMode_MipLevel:  mode = "Mip Level"; break;
@@ -206,14 +212,16 @@ struct DungeonCrawler : SlimApp {
     		// F->bottom.portal_to = &T->right;
     		// T->right.portal_to = &F->bottom;
 
-    		initTileMap(tilemap);
-    		readTileMap(tilemap, SliceFromStaticArray(Tile*, WALLS));
-    		generateTileMapEdges(tilemap);
-    		moveTileMap(tilemap, vec2{20.0f, 20.0f});
+    		initTileMap(tile_map);
+    		readTileMap(tile_map, SliceFromStaticArray(Tile*, WALLS));
+    		generateTileMapEdges(tile_map);
+
+    		settings.init(textures_slice, Texture_ColoredStone, Texture_RedStone, tile_map.width, tile_map.height);
+
+    		ray_cast_renderer::init(&settings, viewport.dimensions, *viewport.camera, tile_map);
     	}
 
-    	onResize(viewport, settings.mip_count);
-        castRays(tilemap, {camera.position.x, camera.position.z});
+    	ray_cast_renderer::onResize(width, height, viewport.camera->focal_length, tile_map);
     }
 
     void OnMouseButtonDown(mouse::Button &mouse_button) override {

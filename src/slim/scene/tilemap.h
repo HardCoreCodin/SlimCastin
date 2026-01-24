@@ -28,8 +28,8 @@ struct BottomRight2Di { i32 right, bottom; };
 struct Bounds2Df { TopLeft2Df tl; BottomRight2Df br; };
 struct Bounds2Di { TopLeft2Di tl; BottomRight2Di br; };
 
-bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
-bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
+INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
+INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
 
 bool inBounds(const Bounds2Df &b, const vec2 &p) { return inRange(b.tl.left, p.x, b.br.right) && inRange(b.tl.top, p.y, b.br.bottom); }
 bool inBounds(const Bounds2Di &b, const vec2i &p) { return inRange(b.tl.left, p.x, b.br.right) && inRange(b.tl.top, p.y, b.br.bottom); }
@@ -184,7 +184,7 @@ void initTileEdge(TileEdge* te) {
 }
 
 
-void initTileMap(TileMap& tm, i32 Width = MAX_TILE_MAP_WIDTH, i32 Height = MAX_TILE_MAP_HEIGHT) {
+void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_TILE_MAP_HEIGHT) {
 	tm.width = Width;
 	tm.height = Height;
 	tm.columns_texture_id = 0;
@@ -210,7 +210,7 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 	current_bounds.br.right = 1;
 
 	std::unordered_map<TileSide*, TileSide*> cell_side_to_tile_side;
-	bool has_portals = false;
+	// bool has_portals = false;
 	tm.portal_sides_count = 0;
 
 	Slice<Tile>* row = nullptr;

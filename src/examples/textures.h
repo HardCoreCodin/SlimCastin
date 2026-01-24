@@ -4,42 +4,28 @@
 #include "../slim/core/string.h"
 
 
-const char* floor_texture_files[] = {
-    "colored_stone.texture",
-    "purple_stone.texture"
-};
-const char* wall_texture_files[] = {
+const char* texture_files[] = {
+    "purple_stone.texture",
     "cobblestone2.texture",
+    "colored_stone.texture",
     "red_stone.texture"
 };
 
-enum FloorTextureID {
-    Floor_ColoredStone,
-    Floor_PurpleStone,
+enum TextureID {
+    Texture_PurpleStone = 0,
+    Texture_CobbleStone,
+    Texture_ColoredStone,
+    Texture_RedStone,
 
-    Floor_TextureCount
-};
-enum WallTextureID {
-    Wall_CobbleStone,
-    Wall_RedStone,
-
-    Wall_TextureCount
+    Texture_Count
 };
 
-Texture floor_textures[Floor_TextureCount];
-Texture wall_textures[Wall_TextureCount];
-
-char floor_textures_string_buffers[Floor_TextureCount][200]{};
-char wall_textures_string_buffers[Wall_TextureCount][200]{};
-
-String floor_texture_strings[Floor_TextureCount] {
-    {floor_textures_string_buffers[0], 200},
-    {floor_textures_string_buffers[1], 200}
+Texture textures[Texture_Count];
+char textures_string_buffers[Texture_Count][200]{};
+String texture_strings[Texture_Count] {
+    {textures_string_buffers[0], 200},
+    {textures_string_buffers[1], 200},
+    {textures_string_buffers[2], 200},
+    {textures_string_buffers[3], 200}
 };
-String wall_texture_strings[Wall_TextureCount] {
-    {wall_textures_string_buffers[0], 200},
-    {wall_textures_string_buffers[1], 200}
-};
-
-TexturePack floor_texture_pack{Floor_TextureCount, floor_textures, floor_texture_strings, floor_texture_files, __FILE__, Terabytes(3)};
-TexturePack wall_texture_pack{Wall_TextureCount, wall_textures, wall_texture_strings, wall_texture_files, __FILE__, Terabytes(3) + Megabytes(3)};
+TexturePack texture_pack{Texture_Count, textures, texture_strings, texture_files, __FILE__, Terabytes(3)};
