@@ -45,42 +45,39 @@ struct Circle {
 
 
 struct LocalEdge {
-	vec2* from;
-	vec2* to;
-	LocalEdge * portal_to;
-	bool is_above;
-	bool is_below;
-	bool is_left;
-	bool is_right;
+	vec2 from;
+	vec2 to;
+	u8 is;
+	u8 texture_id;
+	// LocalEdge * portal_to;
 };
 
+#define FACING_UP      (1 << 0)
+#define FACING_DOWN    (1 << 1)
+#define FACING_LEFT    (1 << 2)
+#define FACING_RIGHT   (1 << 3)
+#define ABOVE          (1 << 4)
+#define BELOW          (1 << 5)
+#define ON_THE_LEFT    (1 << 5)
+#define ON_THE_RIGHT   (1 << 7)
 
 struct TileEdge {
-	LocalEdge local;
-	vec2i* from;
-	vec2i* to;
-	i32 length;
-	i32 portal_ray_rotation;
-	TileEdge* portal_to;
-	bool portal_edge_dir_flip;
-	u8 texture_id;
-	bool
-		is_visible,
-	    is_vertical,
-	    is_horizontal,
-	    is_facing_up,
-	    is_facing_down,
-	    is_facing_left,
-	    is_facing_right,
-		is_facing_forward;
+	vec2i from{};
+	vec2i to{};
+	i32 length = 0;
+	// i32 portal_ray_rotation = 0;
+	// TileEdge* portal_to;
+	// bool portal_edge_dir_flip;
+	u8 texture_id = 0;
+	u8 is = 0;
 };
 
 
 struct TileSide {
-	TileSide* portal_to;
-	TileSide* portal_from;
-	TileEdge* edge;
-	u8 texture_id;
+	// TileSide* portal_to;
+	// TileSide* portal_from;
+	u8 texture_id = 0;
+	u16 edge_id = (u16)(-1);
 };
 
 
@@ -102,6 +99,7 @@ typedef Slice<Tile> TileRow;
 
 struct TileMap : Grid<Tile> {
 	Slice<TileEdge> edges;
+	Slice<LocalEdge> local_edges;
 
 	i32 edge_count;
 	i32 vertex_count;
@@ -121,15 +119,15 @@ struct TileMap : Grid<Tile> {
 	TileRow all_rows[MAX_TILE_MAP_HEIGHT];
 	Tile all_tiles[MAX_TILE_MAP_SIZE];
 	TileEdge all_edges[MAX_TILE_MAP_EDGES];
-	vec2i all_vertices[MAX_TILE_MAP_VERTICES];
-	vec2 all_vertices_in_local_space[MAX_TILE_MAP_VERTICES];
+	LocalEdge all_local_edges[MAX_TILE_MAP_EDGES];
+
 };
 
 
 void initTileSide(TileSide* ts) {
-	ts->portal_from = nullptr;
-	ts->portal_to = nullptr;
-	ts->edge = nullptr;
+	// ts->portal_from = nullptr;
+	// ts->portal_to = nullptr;
+	ts->edge_id = (u16)(-1);
 	ts->texture_id = 0;
 }
 
@@ -154,36 +152,6 @@ void initTile(Tile* t) {
 }
 
 
-void initTileEdge(TileEdge* te) {
-	te->local.from = nullptr;
-	te->local.to = nullptr;
-	te->local.portal_to = nullptr;
-	te->local.is_above = false;
-	te->local.is_below = false;
-	te->local.is_left = false;
-	te->local.is_right = false;
-
-	te->length = 1;
-	te->texture_id = 0;
-
-	te->from = nullptr;
-	te->to = nullptr;
-
-	te->portal_ray_rotation= 0;
-	te->portal_edge_dir_flip = false;
-	te->portal_to = nullptr;
-
-	te->is_visible = false;
-	te->is_vertical = false;
-
-	te->is_facing_left = false;
-	te->is_facing_right = false;
-	te->is_facing_up = false;
-	te->is_facing_down = false;
-	te->is_facing_forward = false;
-}
-
-
 void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_TILE_MAP_HEIGHT) {
 	tm.width = Width;
 	tm.height = Height;
@@ -193,8 +161,7 @@ void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_T
 	for (int i = 0; i < MAX_TILE_MAP_SIZE; i++) initTile(all_tiles.data + i);
 	setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
 	setSliceToStaticArray(tm.edges, tm.all_edges);
-	setSliceToStaticArray(tm.vertices, tm.all_vertices);
-	setSliceToStaticArray(tm.vertices_in_local_space, tm.all_vertices_in_local_space);
+	setSliceToStaticArray(tm.local_edges, tm.all_local_edges);
 	setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
 	initGrid<Tile>(tm, Width, Height, all_tiles);
 }
@@ -243,22 +210,22 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 				cell_side_to_tile_side[&map_cell->top] = &tile->top;
 				cell_side_to_tile_side[&map_cell->bottom] = &tile->bottom;
 
-				if (map_cell->left.portal_to != nullptr) {
-					tm.portal_sides[tm.portal_sides_count] = &tile->left;
-					tm.portal_sides_count += 1;
-				}
-				if (map_cell->right.portal_to != nullptr) {
-					tm.portal_sides[tm.portal_sides_count]= &tile->right;
-					tm.portal_sides_count += 1;
-				}
-				if (map_cell->top.portal_to != nullptr) {
-					tm.portal_sides[tm.portal_sides_count]= &tile->top;
-					tm.portal_sides_count += 1;
-				}
-				if (map_cell->bottom.portal_to != nullptr) {
-					tm.portal_sides[tm.portal_sides_count]= &tile->bottom;
-					tm.portal_sides_count += 1;
-				}
+				// if (map_cell->left.portal_to != nullptr) {
+				// 	tm.portal_sides[tm.portal_sides_count] = &tile->left;
+				// 	tm.portal_sides_count += 1;
+				// }
+				// if (map_cell->right.portal_to != nullptr) {
+				// 	tm.portal_sides[tm.portal_sides_count]= &tile->right;
+				// 	tm.portal_sides_count += 1;
+				// }
+				// if (map_cell->top.portal_to != nullptr) {
+				// 	tm.portal_sides[tm.portal_sides_count]= &tile->top;
+				// 	tm.portal_sides_count += 1;
+				// }
+				// if (map_cell->bottom.portal_to != nullptr) {
+				// 	tm.portal_sides[tm.portal_sides_count]= &tile->bottom;
+				// 	tm.portal_sides_count += 1;
+				// }
 			} else {
 				tile->is_full = false;
 			}
@@ -274,54 +241,59 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 		current_bounds.br.bottom += 1;
     }
 
-	if (tm.portal_sides_count != 0) {
-		offset = 0;
-		iterSlice(tm.cells, row, y) {
-			iterSlice((*row), tile, x) {
-				Tile* map_cell = map_grid[offset];
-				if (map_cell) {
-					if (map_cell->left.portal_to != nullptr) {
-						tile->left.portal_to = cell_side_to_tile_side[map_cell->left.portal_to];
-						tile->left.portal_to->portal_from = &tile->left;
-					}
-					if (map_cell->right.portal_to != nullptr) {
-						tile->right.portal_to = cell_side_to_tile_side[map_cell->right.portal_to];
-						tile->right.portal_to->portal_from = &tile->right;
-					}
-					if (map_cell->top.portal_to != nullptr) {
-						tile->top.portal_to = cell_side_to_tile_side[map_cell->top.portal_to];
-						tile->top.portal_to->portal_from = &tile->top;
-					}
-					if (map_cell->bottom.portal_to != nullptr) {
-						tile->bottom.portal_to = cell_side_to_tile_side[map_cell->bottom.portal_to];
-						tile->bottom.portal_to->portal_from = &tile->bottom;
-					}
-				}
-
-				offset += 1;
-			}
-		}
-	}
+	// if (tm.portal_sides_count != 0) {
+	// 	offset = 0;
+	// 	iterSlice(tm.cells, row, y) {
+	// 		iterSlice((*row), tile, x) {
+	// 			Tile* map_cell = map_grid[offset];
+	// 			if (map_cell) {
+	// 				if (map_cell->left.portal_to != nullptr) {
+	// 					tile->left.portal_to = cell_side_to_tile_side[map_cell->left.portal_to];
+	// 					tile->left.portal_to->portal_from = &tile->left;
+	// 				}
+	// 				if (map_cell->right.portal_to != nullptr) {
+	// 					tile->right.portal_to = cell_side_to_tile_side[map_cell->right.portal_to];
+	// 					tile->right.portal_to->portal_from = &tile->right;
+	// 				}
+	// 				if (map_cell->top.portal_to != nullptr) {
+	// 					tile->top.portal_to = cell_side_to_tile_side[map_cell->top.portal_to];
+	// 					tile->top.portal_to->portal_from = &tile->top;
+	// 				}
+	// 				if (map_cell->bottom.portal_to != nullptr) {
+	// 					tile->bottom.portal_to = cell_side_to_tile_side[map_cell->bottom.portal_to];
+	// 					tile->bottom.portal_to->portal_from = &tile->bottom;
+	// 				}
+	// 			}
+	//
+	// 			offset += 1;
+	// 		}
+	// 	}
+	// }
 }
 
 
 void moveTileMap(TileMap& tm, const vec2& origin) {
-	vec2i* vertex = nullptr;
-	iterSlice(tm.vertices, vertex, i) {
-		tm.vertices_in_local_space[i].x = (f32)vertex->x - origin.x;
-		tm.vertices_in_local_space[i].y = (f32)vertex->y - origin.y;
-	}
-
+	LocalEdge local_edge;
 	TileEdge* edge = nullptr;
+	tm.local_edges.size = 0;
 	iterSlice(tm.edges, edge, i) {
-		edge->local.is_right = edge->local.from->x > 0;
-		edge->local.is_below = edge->local.from->y > 0;
-		edge->local.is_left  = edge->local.to->x < 0;
-		edge->local.is_above = edge->local.to->y < 0;
+		local_edge.texture_id = edge->texture_id;
+		local_edge.from = vec2((f32)edge->from.x - origin.x, (f32)edge->from.y - origin.y);
+		local_edge.to = vec2((f32)edge->to.x - origin.x, (f32)edge->to.y - origin.y);
+		local_edge.is = edge->is;
 
-		edge->is_facing_forward = edge->is_vertical ?
-			(edge->is_facing_left && edge->local.is_right || edge->is_facing_right && edge->local.is_left) :
-			(edge->is_facing_down && edge->local.is_above || edge->is_facing_up    && edge->local.is_below);
+		if (local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
+			if (local_edge.from.x > 0) local_edge.is |= ON_THE_RIGHT;
+			if (local_edge.to.x   < 0) local_edge.is |= ON_THE_LEFT;
+		} else {
+			if (local_edge.to.y   < 0) local_edge.is |= ABOVE;
+			if (local_edge.from.y > 0) local_edge.is |= BELOW;
+		}
+		if (local_edge.is & FACING_LEFT  && local_edge.is & ON_THE_RIGHT ||
+			local_edge.is & FACING_RIGHT && local_edge.is & ON_THE_LEFT ||
+			local_edge.is & FACING_DOWN  && local_edge.is & ABOVE ||
+			local_edge.is & FACING_UP    && local_edge.is & BELOW)
+			tm.local_edges.data[tm.local_edges.size++] = local_edge;
 	}
 }
 
@@ -337,7 +309,6 @@ void generateTileMapEdges(TileMap& tm) {
 	TileCheck above, below, left, right;
 
 	vec2i position;
-	u16 vertex_id = 0;
 	u16 edge_id = 0;
 
 	Slice<Tile>* row = nullptr;
@@ -368,185 +339,104 @@ void generateTileMapEdges(TileMap& tm) {
 	        	current_tile->has_bottom_edge = below.exists && !below.tile->is_full;
 
 	        	if (current_tile->has_left_edge) { // Create/extend left edge:
-		        	if (above.exists && above.tile->has_left_edge &&
-					    above.tile->left.portal_to == current_tile->left.portal_to && current_tile->left.portal_from == nullptr) { // Tile above has a left edge, extend it:
-		        		current_tile->left.edge = above.tile->left.edge;
-		        		current_tile->left.edge->length += 1;
-		        		current_tile->left.edge->to->y += 1;
+		        	if (above.exists && above.tile->has_left_edge) {// &&
+					    // above.tile->left.portal_to == current_tile->left.portal_to && current_tile->left.portal_from == nullptr) { // Tile above has a left edge, extend it:
+		        		current_tile->left.edge_id = above.tile->left.edge_id;
+		        		TileEdge& left_edge = tm.edges[current_tile->left.edge_id];
+		        		left_edge.length++;
+		        		left_edge.to.y++;
 		        	} else { // No left edge above - create new one:
-		        		current_tile->left.edge = &tm.all_edges[edge_id];
-		        		initTileEdge(current_tile->left.edge);
-						current_tile->left.edge->texture_id = current_tile->left.texture_id;
-						edge_id += 1;
-
-		        		current_tile->left.edge->from = nullptr;
-		        		current_tile->left.edge->local.from = nullptr;
-		        		if (left.exists && above.exists) {
-		        			Tile* top_left = &above.row[x-1];
-		        			if (top_left->is_full &&
-		        			    top_left->has_right_edge &&
-		        			    top_left->has_bottom_edge) {
-		        				current_tile->left.edge->from = top_left->bottom.edge->to;
-		        				current_tile->left.edge->local.from = top_left->bottom.edge->local.to;
-		        			}
-		        		}
-
-		        		if (current_tile->left.edge->from == nullptr) {
-		        			current_tile->left.edge->from = &tm.all_vertices[vertex_id];
-		        			current_tile->left.edge->local.from = &tm.all_vertices_in_local_space[vertex_id];
-		        			vertex_id += 1;
-
-		        			*current_tile->left.edge->from = position;
-		        		}
-
-		        		current_tile->left.edge->to = &tm.all_vertices[vertex_id];
-		        		current_tile->left.edge->local.to = &tm.all_vertices_in_local_space[vertex_id];
-		        		vertex_id += 1;
-
-		        		*current_tile->left.edge->to = position;
-		        		current_tile->left.edge->to->y += 1;
-
-		        		current_tile->left.edge->is_vertical = true;
-		        		current_tile->left.edge->is_horizontal = false;
-		        		current_tile->left.edge->is_facing_left = true;
+		        		current_tile->left.edge_id = edge_id;
+		        		TileEdge& left_edge = tm.edges[edge_id++];
+		        		left_edge.is = FACING_LEFT;
+						left_edge.texture_id = current_tile->left.texture_id;
+		        		left_edge.to = left_edge.from = position;
+		        		left_edge.to.y++;
+		        		// if (left.exists && above.exists) {
+		        		// 	const Tile& top_left_tile = above.row[x-1];
+		        		// 	if (top_left_tile.is_full &&
+		        		// 	    top_left_tile.has_right_edge &&
+		        		// 	    top_left_tile.has_bottom_edge) {
+		        		// 		left_edge.from = tm.edges[top_left_tile.bottom.edge_id].to;
+		        		// 	}
+		        		// }
 			        }
 			    }
 
 				if (current_tile->has_right_edge) { // Create/extend right edge:
-		        	if (above.exists && above.tile->has_right_edge &&
-					    above.tile->right.portal_to == current_tile->right.portal_to && current_tile->right.portal_from == nullptr) { // Tile above has a right edge, extend it:
-		        		current_tile->right.edge = above.tile->right.edge;
-		        		current_tile->right.edge->length += 1;
-		        		current_tile->right.edge->to->y += 1;
+		        	if (above.exists && above.tile->has_right_edge) {// &&
+					    // above.tile->right.portal_to == current_tile->right.portal_to && current_tile->right.portal_from == nullptr) { // Tile above has a right edge, extend it:
+		        		current_tile->right.edge_id = above.tile->right.edge_id;
+		        		TileEdge& right_edge = tm.edges[above.tile->right.edge_id];
+		        		right_edge.length++;
+		        		right_edge.to.y++;
 		        	} else { // No right edge above - create new one:
-		        		current_tile->right.edge = &tm.all_edges[edge_id];
-		        		initTileEdge(current_tile->right.edge);
-						current_tile->right.edge->texture_id = current_tile->right.texture_id;
-						edge_id += 1;
-
-						current_tile->right.edge->from = nullptr;
-		        		current_tile->right.edge->local.from = nullptr;
-		        		if (right.exists && above.exists) {
-		        			Tile* top_right = &above.row[x+1];
-		        			if (top_right->is_full &&
-		        			    top_right->has_left_edge &&
-		        			    top_right->has_bottom_edge) {
-		        				current_tile->right.edge->from = top_right->bottom.edge->from;
-		        				current_tile->right.edge->local.from = top_right->bottom.edge->local.from;
-		        			}
-		        		}
-
-		        		if (current_tile->right.edge->from == nullptr) {
-		        			current_tile->right.edge->from = &tm.all_vertices[vertex_id];
-		        			current_tile->right.edge->local.from = &tm.all_vertices_in_local_space[vertex_id];
-		        			vertex_id += 1;
-
-		        			*current_tile->right.edge->from = position;
-		        			current_tile->right.edge->from->x += 1;
-		        		}
-
-						current_tile->right.edge->to = &tm.all_vertices[vertex_id];
-		        		current_tile->right.edge->local.to = &tm.all_vertices_in_local_space[vertex_id];
-		        		vertex_id += 1;
-
-		        		*current_tile->right.edge->to = position;
-		        		current_tile->right.edge->to->x += 1;
-		        		current_tile->right.edge->to->y += 1;
-
-		        		current_tile->right.edge->is_vertical = true;
-		        		current_tile->right.edge->is_horizontal = false;
-		        		current_tile->right.edge->is_facing_right = true;
+		        		current_tile->right.edge_id = edge_id;
+		        		TileEdge& right_edge = tm.edges[edge_id++];
+		        		right_edge.is = FACING_RIGHT;
+						right_edge.texture_id = current_tile->right.texture_id;
+		        		right_edge.from = right_edge.to = position;
+		        		right_edge.from.x++;
+		        		right_edge.to.x++;
+		        		right_edge.to.y++;
+		        		// if (right.exists && above.exists) {
+		        		// 	const Tile& top_right_tile = above.row[x+1];
+		        		// 	if (top_right_tile.is_full &&
+		        		// 	    top_right_tile.has_left_edge &&
+		        		// 	    top_right_tile.has_bottom_edge) {
+		        		// 		right_edge.from = tm.edges[top_right_tile.bottom.edge_id].from;
+		        		// 	}
+		        		// }
 			        }
 				}
 
 		        if (current_tile->has_top_edge) { // Create/extend top edge:
-		        	if (left.exists && left.tile->has_top_edge &&
-						left.tile->top.portal_to == current_tile->top.portal_to && current_tile->top.portal_from == nullptr) { // Tile on the left has a top edge, extend it:
-		        		current_tile->top.edge = left.tile->top.edge;
-		        		current_tile->top.edge->length += 1;
-		        		current_tile->top.edge->to->x += 1;
+		        	if (left.exists && left.tile->has_top_edge) {// &&
+						// left.tile->top.portal_to == current_tile->top.portal_to && current_tile->top.portal_from == nullptr) { // Tile on the left has a top edge, extend it:
+		        		current_tile->top.edge_id = left.tile->top.edge_id;
+		        		TileEdge& top_edge = tm.edges[left.tile->top.edge_id];
+		        		top_edge.length++;
+		        		top_edge.to.x++;
 		        	} else { // No top edge on the left - create new one:
-		        		current_tile->top.edge = &tm.all_edges[edge_id];
-		        		initTileEdge(current_tile->top.edge);
-						current_tile->top.edge->texture_id = current_tile->top.texture_id;
-						edge_id += 1;
-
-						current_tile->top.edge->from = nullptr;
-		        		current_tile->top.edge->local.from = nullptr;
-		        		if (left.exists && above.exists) {
-		        			Tile* top_left = &above.row[x-1];
-		        			if (top_left->is_full &&
-		        			   top_left->has_right_edge &&
-		        			   top_left->has_bottom_edge) {
-		        				current_tile->top.edge->from = top_left->bottom.edge->to;
-		        				current_tile->top.edge->local.from = top_left->bottom.edge->local.to;
-		        			}
-		        		}
-
-						current_tile->top.edge->to = nullptr;
-		        		current_tile->top.edge->local.to = nullptr;
-		        		if (right.exists && above.exists) {
-		        			Tile* top_right = &above.row[x+1];
-		        			if (top_right->is_full &&
-		        			   top_right->has_left_edge &&
-		        			   top_right->has_bottom_edge) {
-		        				current_tile->top.edge->to = top_right->bottom.edge->from;
-		        				current_tile->top.edge->local.to = top_right->bottom.edge->local.from;
-		        			}
-		        		}
-
-		        		if (current_tile->top.edge->from == nullptr) {
-		        			current_tile->top.edge->from = &tm.all_vertices[vertex_id];
-		        			current_tile->top.edge->local.from = &tm.all_vertices_in_local_space[vertex_id];
-		        			vertex_id += 1;
-
-		        			*current_tile->top.edge->from = position;
-		        		}
-
-						if (current_tile->top.edge->to == nullptr) {
-		        			current_tile->top.edge->to = &tm.all_vertices[vertex_id];
-		        			current_tile->top.edge->local.to = &tm.all_vertices_in_local_space[vertex_id];
-		        			vertex_id += 1;
-
-		        			*current_tile->top.edge->to = position;
-		        			current_tile->top.edge->to->x += 1;
-		        		}
-
-		        		current_tile->top.edge->is_vertical = false;
-		        		current_tile->top.edge->is_horizontal = true;
-		        		current_tile->top.edge->is_facing_up = true;
+		        		current_tile->top.edge_id = edge_id;
+		        		TileEdge& top_edge = tm.edges[edge_id++];
+		        		top_edge.is = FACING_UP;
+		        		top_edge.texture_id = current_tile->top.texture_id;
+		        		top_edge.from = top_edge.to = position;
+		        		top_edge.to.x++;
+		      //   		if (left.exists && above.exists) {
+		      //   			const Tile& top_left_tile = above.row[x-1];
+		      //   			if (top_left_tile.is_full &&
+								// top_left_tile.has_right_edge &&
+								// top_left_tile.has_bottom_edge)
+		      //   				top_edge.from = tm.edges[top_left_tile.bottom.edge_id].to;
+		      //   		}
+		      //   		if (right.exists && above.exists) {
+		      //   			const Tile& top_right_tile = above.row[x+1];
+		      //   			if (top_right_tile.is_full &&
+								// top_right_tile.has_left_edge &&
+								// top_right_tile.has_bottom_edge)
+		      //   				top_edge.to = tm.edges[top_right_tile.bottom.edge_id].from;
+		      //   		}
 			        }
 		        }
 
 		        if (current_tile->has_bottom_edge) { // Create/extend bottom edge:
-		        	if (left.exists && left.tile->has_bottom_edge &&
-						left.tile->bottom.portal_to == current_tile->bottom.portal_to && current_tile->bottom.portal_from == nullptr) {// Tile on the left has a bottom edge, extend it:
-		        		current_tile->bottom.edge = left.tile->bottom.edge;
-		        		current_tile->bottom.edge->length += 1;
-		        		current_tile->bottom.edge->to->x += 1;
+		        	if (left.exists && left.tile->has_bottom_edge) { // &&
+						// left.tile->bottom.portal_to == current_tile->bottom.portal_to && current_tile->bottom.portal_from == nullptr) {// Tile on the left has a bottom edge, extend it:
+		        		current_tile->bottom.edge_id = left.tile->bottom.edge_id;
+		        		TileEdge& bottom_edge = tm.edges[left.tile->bottom.edge_id];
+		        		bottom_edge.length++;
+		        		bottom_edge.to.x++;
 		        	} else { // No bottom edge on the left - create new one:
-		        		current_tile->bottom.edge = &tm.all_edges[edge_id];
-		        		initTileEdge(current_tile->bottom.edge);
-						current_tile->bottom.edge->texture_id = current_tile->bottom.texture_id;
-						edge_id += 1;
-
-	        			current_tile->bottom.edge->from = &tm.all_vertices[vertex_id];
-	        			current_tile->bottom.edge->local.from = &tm.all_vertices_in_local_space[vertex_id];
-	        			vertex_id += 1;
-
-	        			*current_tile->bottom.edge->from = position;
-	        			current_tile->bottom.edge->from->y += 1;
-
-	        			current_tile->bottom.edge->to = &tm.all_vertices[vertex_id];
-	        			current_tile->bottom.edge->local.to = &tm.all_vertices_in_local_space[vertex_id];
-	        			vertex_id += 1;
-
-	        			*current_tile->bottom.edge->to = position;
-	        			current_tile->bottom.edge->to->x += 1;
-	        			current_tile->bottom.edge->to->y += 1;
-
-		        		current_tile->bottom.edge->is_horizontal = true;
-		        		current_tile->bottom.edge->is_facing_down = true;
+		        		current_tile->bottom.edge_id = edge_id;
+		        		TileEdge& bottom_edge = tm.edges[edge_id++];
+		        		bottom_edge.is = FACING_DOWN;
+		        		bottom_edge.texture_id = current_tile->bottom.texture_id;
+		        		bottom_edge.from = bottom_edge.to = position;
+		        		bottom_edge.from.y++;
+		        		bottom_edge.to.x++;
+		        		bottom_edge.to.y++;
 			        }
 	        	}
         	} else {
@@ -570,43 +460,40 @@ void generateTileMapEdges(TileMap& tm) {
     }
 
 	setSliceToRangeOfStaticArray(tm.edges, tm.all_edges, 0, edge_id);
-	setSliceToRangeOfStaticArray(tm.vertices, tm.all_vertices, 0, vertex_id);
-	setSliceToRangeOfStaticArray(tm.vertices_in_local_space, tm.all_vertices_in_local_space, 0, edge_id);
-
-	if (tm.portal_sides_count) {
-		for (i32 i = 0; i < tm.portal_sides_count; i++) {
-			const TileSide& side = *tm.portal_sides[i];
-			TileEdge& from_edge = *side.edge;
-			TileEdge& to_edge = *side.portal_to->edge;
-			from_edge.portal_to = &to_edge;
-
-			//
-
-			if (from_edge.is_vertical) {
-				if (to_edge.is_horizontal) {
-					from_edge.portal_edge_dir_flip = to_edge.is_facing_up;
-					if (from_edge.is_facing_right) {
-						from_edge.portal_ray_rotation = to_edge.is_facing_up ? 90 : -90; // to_edge.is_facing_down
-					} else {
-						from_edge.portal_ray_rotation = to_edge.is_facing_down ? 90: -90; // to_edge.is_facing_up
-					}
-				} else {
-					from_edge.portal_edge_dir_flip = from_edge.is_facing_right != to_edge.is_facing_right;
-					from_edge.portal_ray_rotation = from_edge.portal_edge_dir_flip ? 180 : 0;
-				}
-			} else {
-				if (to_edge.is_vertical) {
-					from_edge.portal_edge_dir_flip = to_edge.is_facing_left;
-					if (from_edge.is_facing_up) {
-						from_edge.portal_ray_rotation = to_edge.is_facing_left ? 90 : -90; // to_edge.is_facing_right
-					} else {
-						from_edge.portal_ray_rotation = to_edge.is_facing_right ? 90 : -90; // to_edge.is_facing_left
-					}
-				} else {
-					from_edge.portal_edge_dir_flip = from_edge.is_facing_up != to_edge.is_facing_up;
-					from_edge.portal_ray_rotation = from_edge.portal_edge_dir_flip ? 180 : 0;
-				}
-			}
-		}
-	}
+	// if (tm.portal_sides_count) {
+	// 	for (i32 i = 0; i < tm.portal_sides_count; i++) {
+	// 		const TileSide& side = *tm.portal_sides[i];
+	// 		TileEdge& from_edge = *side.edge;
+	// 		TileEdge& to_edge = *side.portal_to->edge;
+	// 		from_edge.portal_to = &to_edge;
+	//
+	// 		//
+	//
+	// 		if (from_edge.is_vertical) {
+	// 			if (to_edge.is_horizontal) {
+	// 				from_edge.portal_edge_dir_flip = to_edge.is_facing_up;
+	// 				if (from_edge.is_facing_right) {
+	// 					from_edge.portal_ray_rotation = to_edge.is_facing_up ? 90 : -90; // to_edge.is_facing_down
+	// 				} else {
+	// 					from_edge.portal_ray_rotation = to_edge.is_facing_down ? 90: -90; // to_edge.is_facing_up
+	// 				}
+	// 			} else {
+	// 				from_edge.portal_edge_dir_flip = from_edge.is_facing_right != to_edge.is_facing_right;
+	// 				from_edge.portal_ray_rotation = from_edge.portal_edge_dir_flip ? 180 : 0;
+	// 			}
+	// 		} else {
+	// 			if (to_edge.is_vertical) {
+	// 				from_edge.portal_edge_dir_flip = to_edge.is_facing_left;
+	// 				if (from_edge.is_facing_up) {
+	// 					from_edge.portal_ray_rotation = to_edge.is_facing_left ? 90 : -90; // to_edge.is_facing_right
+	// 				} else {
+	// 					from_edge.portal_ray_rotation = to_edge.is_facing_right ? 90 : -90; // to_edge.is_facing_left
+	// 				}
+	// 			} else {
+	// 				from_edge.portal_edge_dir_flip = from_edge.is_facing_up != to_edge.is_facing_up;
+	// 				from_edge.portal_ray_rotation = from_edge.portal_edge_dir_flip ? 180 : 0;
+	// 			}
+	// 		}
+	// 	}
+	// }
 }

@@ -42,7 +42,7 @@ struct Navigation {
 
     void orient(Camera &camera) {
         camera.orientation.rotate(0.0f,//settings.speed.orient * -(f32)mouse::pos_raw_diff_y,
-                      settings.speed.orient * -(f32)mouse::pos_raw_diff_x);
+                      settings.speed.orient * (f32)mouse::pos_raw_diff_x);
         mouse::moved = false;
         turned = true;
     }
@@ -77,6 +77,7 @@ struct Navigation {
         velocity = velocity.approachTo(target_velocity,
                                        settings.acceleration * delta_time);
         vec3 movement = velocity * delta_time;
+        movement.z = -movement.z;
         moved = movement.nonZero();
         if (moved) camera.position += camera.orientation * movement;
     }

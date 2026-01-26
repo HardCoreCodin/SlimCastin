@@ -41,7 +41,7 @@
 // 11111111111111111111111111111111
 // `;
 
-TileSide TILE_SIDE{nullptr, nullptr, nullptr, 1};
+TileSide TILE_SIDE{};
 Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, Bounds2Di{}, true, true, true, true, true};
 Tile F_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, Bounds2Di{}, true, true, true, true, true};
 Tile T_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, Bounds2Di{}, true, true, true, true, true};
@@ -52,9 +52,9 @@ Tile* W{&W_TILE};
 Tile* I{nullptr};
 
 Tile* WALLS[] = {
-	W,W,W,W,W,W,W,W,W,W,W,W,F,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,
+	W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,W,
 	W,I,I,I,I,I,I,I,I,I,W,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,W,
-	W,I,I,W,I,I,I,W,W,I,T,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,W,
+	W,I,I,W,I,I,I,W,W,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,W,
 	W,W,W,W,W,W,I,W,W,W,W,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,W,
 	W,I,I,W,I,I,I,I,I,W,W,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,W,
 	W,I,I,I,I,W,W,I,I,I,W,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,I,W,
@@ -134,7 +134,7 @@ struct DungeonCrawler : SlimApp {
 
 
 	// Viewport:
-	Camera camera{{}, {20, 0, 20}};
+	Camera camera{{0, 0 * DEG_TO_RAD, 0}, {13, 0, 3}};
 	Canvas canvas;
 	Viewport viewport{canvas, &camera};
 

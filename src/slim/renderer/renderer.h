@@ -69,7 +69,7 @@ namespace ray_cast_renderer {
     }
 
     void onMoveOrTurn(const Camera& camera, const TileMap& tile_map) {
-        forward = vec2(camera.orientation.Z.x, camera.orientation.Z.z).normalized();
+        forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z).normalized();
         right = vec2(camera.orientation.X.x, camera.orientation.X.z).normalized() * ((f32)screen_width / (f32)screen_height);
 
         generateWallHits(camera.focal_length, tile_map);
@@ -85,7 +85,6 @@ namespace ray_cast_renderer {
     }
 
     void renderOnCPU(Canvas &canvas) {
-        // canvas.clear(1.0f, 0.0f, 1.0f, 1.0f);
         const vec2 tile_map_end = vec2((f32)(settings->tile_map_width - 1), (f32)(settings->tile_map_height - 1));
 
         for (u16 x = 0; x < screen_width; x++) {

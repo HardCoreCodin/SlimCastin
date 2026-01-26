@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.11)
 
+#set(CMAKE_CXX_STANDARD 17) # Set the C++ standard to 17 (or 11, 14, 20, etc.)
+#set(CMAKE_CXX_STANDARD_REQUIRED True) # Ensures the compiler supports the specified standard and doesn't fall back
+
 project(DungeonCrawler)
+#project(DungeonCrawler LANGUAGES CXX)
 add_executable(DungeonCrawler WIN32 src/examples/DungeonCrawler.cpp)
 
 project(bmp2texture)
@@ -20,8 +24,10 @@ if(DEFINED CMAKE_CUDA_COMPILER)
 endif()
 
 
-#add_compile_options(
-#        $<$<CONFIG:RELEASE>:-O3>
+add_compile_options(
+        $<$<CONFIG:RELEASE>:-O2>
+        $<$<CONFIG:RELEASE>:-GL>
+        $<$<CONFIG:RELEASE>:-LTCG>
 #        $<$<CONFIG:RELEASE>:-Oi>
 #        $<$<CONFIG:RELEASE>:-Mt>
 #        $<$<CONFIG:DEBUG>:-JMC>
@@ -39,11 +45,11 @@ endif()
 #        -sdl
 #        -nologo
 #        -analyze-
-#        -fp:fast
+        -fp:fast
 #        -Zc:inline
 #        -diagnostics:caret
 #        -errorReport:none
-#)
+)
 
 
 #target_compile_options(07_Meshes PUBLIC
