@@ -1,65 +1,34 @@
 #pragma once
 
-#include "../math/vec2.h"
+#include "tilemap_base.h"
 
 #include <unordered_map>
 
 
-#define MAX_TILE_MAP_VIEW_DISTANCE 42
-#define MAX_TILE_MAP_WIDTH 32
-#define MAX_TILE_MAP_HEIGHT 32
-#define MAX_TILE_MAP_SIZE (MAX_TILE_MAP_WIDTH * MAX_TILE_MAP_HEIGHT)
-#define MAX_TILE_MAP_VERTICES ((MAX_TILE_MAP_WIDTH + 1) * (MAX_TILE_MAP_HEIGHT + 1))
-#define MAX_TILE_MAP_EDGES (MAX_TILE_MAP_WIDTH * (MAX_TILE_MAP_HEIGHT + 1) + MAX_TILE_MAP_HEIGHT * (MAX_TILE_MAP_WIDTH + 1))
 
-#define MAX_COLUMN_COUNT 16
-
-
-struct TopLeft2Df { f32 left, top; };
-struct TopLeft2Di { i32 left, top; };
-struct BottomRight2Df { f32 right, bottom; };
-struct BottomRight2Di { i32 right, bottom; };
+// struct TopLeft2Df { f32 left, top; };
+// struct TopLeft2Di { i32 left, top; };
+// struct BottomRight2Df { f32 right, bottom; };
+// struct BottomRight2Di { i32 right, bottom; };
 
 // union TopLeft2DfMin { vec2 min; TopLeft2Df top_left; };
 // union TopLeft2DiMin { vec2i min; TopLeft2Di top_left; };
 // union BottomRight2DfMax { vec2 max;  BottomRight2Df bottom_right; };
 // union BottomRight2DiMax { vec2i max; BottomRight2Di bottom_right; };
 
-struct Bounds2Df { TopLeft2Df tl; BottomRight2Df br; };
-struct Bounds2Di { TopLeft2Di tl; BottomRight2Di br; };
+// struct Bounds2Df { TopLeft2Df tl; BottomRight2Df br; };
+// struct Bounds2Di { TopLeft2Di tl; BottomRight2Di br; };
 
-INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
-INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
 
-bool inBounds(const Bounds2Df &b, const vec2 &p) { return inRange(b.tl.left, p.x, b.br.right) && inRange(b.tl.top, p.y, b.br.bottom); }
-bool inBounds(const Bounds2Di &b, const vec2i &p) { return inRange(b.tl.left, p.x, b.br.right) && inRange(b.tl.top, p.y, b.br.bottom); }
+
+// bool inBounds(const Bounds2Df &b, const vec2 &p) { return inRange(b.tl.left, p.x, b.br.right) && inRange(b.tl.top, p.y, b.br.bottom); }
+// bool inBounds(const Bounds2Di &b, const vec2i &p) { return inRange(b.tl.left, p.x, b.br.right) && inRange(b.tl.top, p.y, b.br.bottom); }
 
 // Rect2Df :: struct {using bounds: Bounds2Df, using size: Size2Df, position: vec2}
 // Rect2Di :: struct {using bounds: Bounds2Di, using size: Size2Di, position: vec2i}
 
 
-struct Circle {
-	vec2 position;
-	f32 radius;
-};
 
-
-struct LocalEdge {
-	vec2 from;
-	vec2 to;
-	u8 is;
-	u8 texture_id;
-	// LocalEdge * portal_to;
-};
-
-#define FACING_UP      (1 << 0)
-#define FACING_DOWN    (1 << 1)
-#define FACING_LEFT    (1 << 2)
-#define FACING_RIGHT   (1 << 3)
-#define ABOVE          (1 << 4)
-#define BELOW          (1 << 5)
-#define ON_THE_LEFT    (1 << 5)
-#define ON_THE_RIGHT   (1 << 7)
 
 struct TileEdge {
 	vec2i from{};
@@ -84,7 +53,7 @@ struct TileSide {
 struct Tile {
 	TileSide top, bottom, left, right;
 
-	Bounds2Di bounds;
+	// Bounds2Di bounds;
 
 	bool
 	is_full,
@@ -98,21 +67,18 @@ typedef Slice<Tile> TileRow;
 
 
 struct TileMap : Grid<Tile> {
+	Slice<Circle> columns;
 	Slice<TileEdge> edges;
 	Slice<LocalEdge> local_edges;
 
-	i32 edge_count;
-	i32 vertex_count;
-	i32 column_count;
+	// i32 vertex_count;
+	// Slice<vec2i> vertices;
+	// Slice<vec2> vertices_in_local_space;
 
-	Slice<vec2i> vertices;
-	Slice<vec2> vertices_in_local_space;
-
-	Circle columns[MAX_COLUMN_COUNT];
 	u8 columns_texture_id;
 
 	i32 portal_sides_count;
-	Slice<TileSide*> portal_sides;
+	// Slice<TileSide*> portal_sides;
 	std::unordered_map<TileSide*, Tile*> side_to_tile;
 
 	TileSide* all_portal_sides[MAX_TILE_MAP_EDGES];
@@ -120,7 +86,7 @@ struct TileMap : Grid<Tile> {
 	Tile all_tiles[MAX_TILE_MAP_SIZE];
 	TileEdge all_edges[MAX_TILE_MAP_EDGES];
 	LocalEdge all_local_edges[MAX_TILE_MAP_EDGES];
-
+	Circle all_columns[MAX_COLUMN_COUNT];
 };
 
 
@@ -145,10 +111,10 @@ void initTile(Tile* t) {
 	t->has_top_edge = false;
 	t->has_bottom_edge = false;
 
-	t->bounds.tl.top = 0;
-	t->bounds.tl.left = 0;
-	t->bounds.br.bottom = 0;
-	t->bounds.br.right = 0;
+	// t->bounds.tl.top = 0;
+	// t->bounds.tl.left = 0;
+	// t->bounds.br.bottom = 0;
+	// t->bounds.br.right = 0;
 }
 
 
@@ -159,22 +125,22 @@ void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_T
 	Slice<Tile> all_tiles;
 	setSliceToStaticArray(all_tiles, tm.all_tiles);
 	for (int i = 0; i < MAX_TILE_MAP_SIZE; i++) initTile(all_tiles.data + i);
-	setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
+	setSliceToStaticArray(tm.columns, tm.all_columns);
 	setSliceToStaticArray(tm.edges, tm.all_edges);
 	setSliceToStaticArray(tm.local_edges, tm.all_local_edges);
-	setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
+	// setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
 	initGrid<Tile>(tm, Width, Height, all_tiles);
 }
 
 
 void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 	u32 offset = 0;
-    Bounds2Di current_bounds;
+    // Bounds2Di current_bounds;
 
-	current_bounds.tl.top = 0;
-	current_bounds.tl.left = 0;
-	current_bounds.br.bottom = 1;
-	current_bounds.br.right = 1;
+	// current_bounds.tl.top = 0;
+	// current_bounds.tl.left = 0;
+	// current_bounds.br.bottom = 1;
+	// current_bounds.br.right = 1;
 
 	std::unordered_map<TileSide*, TileSide*> cell_side_to_tile_side;
 	// bool has_portals = false;
@@ -195,7 +161,7 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 	iterSlice(tm.cells, row, y) {
 		iterSlice((*row), tile, x) {
 			initTile(tile);
-			tile->bounds = current_bounds;
+			// tile->bounds = current_bounds;
 
 			Tile* map_cell = map_grid[offset];
 			tile->is_full = map_cell != nullptr;
@@ -230,15 +196,15 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 				tile->is_full = false;
 			}
 
-			current_bounds.tl.left += 1;
-			current_bounds.br.right += 1;
+			// current_bounds.tl.left += 1;
+			// current_bounds.br.right += 1;
 			offset += 1;
 		}
 
-        current_bounds.tl.left = 0;
-		current_bounds.br.right = 1;
-		current_bounds.tl.top += 1;
-		current_bounds.br.bottom += 1;
+  //       current_bounds.tl.left = 0;
+		// current_bounds.br.right = 1;
+		// current_bounds.tl.top += 1;
+		// current_bounds.br.bottom += 1;
     }
 
 	// if (tm.portal_sides_count != 0) {
@@ -309,7 +275,7 @@ void generateTileMapEdges(TileMap& tm) {
 	TileCheck above, below, left, right;
 
 	vec2i position;
-	u16 edge_id = 0;
+	tm.edges.size = 0;
 
 	Slice<Tile>* row = nullptr;
 	Tile* current_tile = nullptr;
@@ -346,20 +312,12 @@ void generateTileMapEdges(TileMap& tm) {
 		        		left_edge.length++;
 		        		left_edge.to.y++;
 		        	} else { // No left edge above - create new one:
-		        		current_tile->left.edge_id = edge_id;
-		        		TileEdge& left_edge = tm.edges[edge_id++];
+		        		current_tile->left.edge_id = (u16)tm.edges.size;
+		        		TileEdge& left_edge = tm.edges.data[tm.edges.size++];
 		        		left_edge.is = FACING_LEFT;
 						left_edge.texture_id = current_tile->left.texture_id;
 		        		left_edge.to = left_edge.from = position;
 		        		left_edge.to.y++;
-		        		// if (left.exists && above.exists) {
-		        		// 	const Tile& top_left_tile = above.row[x-1];
-		        		// 	if (top_left_tile.is_full &&
-		        		// 	    top_left_tile.has_right_edge &&
-		        		// 	    top_left_tile.has_bottom_edge) {
-		        		// 		left_edge.from = tm.edges[top_left_tile.bottom.edge_id].to;
-		        		// 	}
-		        		// }
 			        }
 			    }
 
@@ -367,26 +325,18 @@ void generateTileMapEdges(TileMap& tm) {
 		        	if (above.exists && above.tile->has_right_edge) {// &&
 					    // above.tile->right.portal_to == current_tile->right.portal_to && current_tile->right.portal_from == nullptr) { // Tile above has a right edge, extend it:
 		        		current_tile->right.edge_id = above.tile->right.edge_id;
-		        		TileEdge& right_edge = tm.edges[above.tile->right.edge_id];
+		        		TileEdge& right_edge = tm.edges.data[above.tile->right.edge_id];
 		        		right_edge.length++;
 		        		right_edge.to.y++;
 		        	} else { // No right edge above - create new one:
-		        		current_tile->right.edge_id = edge_id;
-		        		TileEdge& right_edge = tm.edges[edge_id++];
+		        		current_tile->right.edge_id = (u16)tm.edges.size;
+		        		TileEdge& right_edge = tm.edges[tm.edges.size++];
 		        		right_edge.is = FACING_RIGHT;
 						right_edge.texture_id = current_tile->right.texture_id;
 		        		right_edge.from = right_edge.to = position;
 		        		right_edge.from.x++;
 		        		right_edge.to.x++;
 		        		right_edge.to.y++;
-		        		// if (right.exists && above.exists) {
-		        		// 	const Tile& top_right_tile = above.row[x+1];
-		        		// 	if (top_right_tile.is_full &&
-		        		// 	    top_right_tile.has_left_edge &&
-		        		// 	    top_right_tile.has_bottom_edge) {
-		        		// 		right_edge.from = tm.edges[top_right_tile.bottom.edge_id].from;
-		        		// 	}
-		        		// }
 			        }
 				}
 
@@ -398,26 +348,12 @@ void generateTileMapEdges(TileMap& tm) {
 		        		top_edge.length++;
 		        		top_edge.to.x++;
 		        	} else { // No top edge on the left - create new one:
-		        		current_tile->top.edge_id = edge_id;
-		        		TileEdge& top_edge = tm.edges[edge_id++];
+		        		current_tile->top.edge_id = (u16)tm.edges.size;
+		        		TileEdge& top_edge = tm.edges.data[tm.edges.size++];
 		        		top_edge.is = FACING_UP;
 		        		top_edge.texture_id = current_tile->top.texture_id;
 		        		top_edge.from = top_edge.to = position;
 		        		top_edge.to.x++;
-		      //   		if (left.exists && above.exists) {
-		      //   			const Tile& top_left_tile = above.row[x-1];
-		      //   			if (top_left_tile.is_full &&
-								// top_left_tile.has_right_edge &&
-								// top_left_tile.has_bottom_edge)
-		      //   				top_edge.from = tm.edges[top_left_tile.bottom.edge_id].to;
-		      //   		}
-		      //   		if (right.exists && above.exists) {
-		      //   			const Tile& top_right_tile = above.row[x+1];
-		      //   			if (top_right_tile.is_full &&
-								// top_right_tile.has_left_edge &&
-								// top_right_tile.has_bottom_edge)
-		      //   				top_edge.to = tm.edges[top_right_tile.bottom.edge_id].from;
-		      //   		}
 			        }
 		        }
 
@@ -429,8 +365,8 @@ void generateTileMapEdges(TileMap& tm) {
 		        		bottom_edge.length++;
 		        		bottom_edge.to.x++;
 		        	} else { // No bottom edge on the left - create new one:
-		        		current_tile->bottom.edge_id = edge_id;
-		        		TileEdge& bottom_edge = tm.edges[edge_id++];
+		        		current_tile->bottom.edge_id = (u16)tm.edges.size;
+		        		TileEdge& bottom_edge = tm.edges.data[tm.edges.size++];
 		        		bottom_edge.is = FACING_DOWN;
 		        		bottom_edge.texture_id = current_tile->bottom.texture_id;
 		        		bottom_edge.from = bottom_edge.to = position;
@@ -446,11 +382,11 @@ void generateTileMapEdges(TileMap& tm) {
 	        	current_tile->has_bottom_edge = false;
         	}
 
-	        current_tile->bounds.tl.left = position.x;
-	        current_tile->bounds.br.right = position.x + 1;
+	        // current_tile->bounds.tl.left = position.x;
+	        // current_tile->bounds.br.right = position.x + 1;
 
-	        current_tile->bounds.tl.top = position.y;
-	        current_tile->bounds.br.bottom = position.y + 1;
+	        // current_tile->bounds.tl.top = position.y;
+	        // current_tile->bounds.br.bottom = position.y + 1;
 
 			position.x += 1;
         }
@@ -459,7 +395,7 @@ void generateTileMapEdges(TileMap& tm) {
         position.y += 1;
     }
 
-	setSliceToRangeOfStaticArray(tm.edges, tm.all_edges, 0, edge_id);
+	// setSliceToRangeOfStaticArray(tm.edges, tm.all_edges, 0, tm.edges.size);
 	// if (tm.portal_sides_count) {
 	// 	for (i32 i = 0; i < tm.portal_sides_count; i++) {
 	// 		const TileSide& side = *tm.portal_sides[i];

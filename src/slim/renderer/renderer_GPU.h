@@ -14,12 +14,42 @@ struct DeviceHits {
 __constant__ RayCasterSettings d_settings;
 __constant__ CanvasData d_canvas;
 __constant__ DeviceHits d_hits;
+__constant__ Slice<Circle> d_columns;
+__constant__ Slice<LocalEdge> d_local_edges;
 
 RayCasterSettings t_settings;
+Slice<Circle> t_columns;
+Slice<LocalEdge> t_local_edges;
 CanvasData t_canvas;
 DeviceHits t_hits;
 TextureMip *t_texture_mips;
 TexelQuad *t_texel_quads;
+
+__global__ void d_generateWallHits(RayCaster ray_caster) {
+    const u32 x = blockDim.x * blockIdx.x + threadIdx.x;
+    if (x >= ray_caster.screen_width)
+        return;
+
+    WallHit wall_hit;
+    RayHit closest_hit;
+    Ray ray;
+    vec2 ray_direction = ray_caster.first_ray_direction + (f32)x * ray_caster.right_step;
+    ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, d_local_edges, d_columns);
+    d_hits.wall_hits[x] = wall_hit;
+}
+
+void generateWallHitsOnGPU(const RayCaster& ray_caster) {
+    u32 pixel_count = ray_caster.screen_width;
+    u32 threads = SLIM_THREADS_PER_BLOCK;
+    u32 blocks  = pixel_count / threads;
+    if (pixel_count < threads) {
+        threads = pixel_count;
+        blocks = 1;
+    } else if (pixel_count % threads)
+        blocks++;
+
+    d_generateWallHits<<<blocks, threads>>>(ray_caster);
+}
 
 __global__ void d_render(vec2 position) {
     const u32 s = d_canvas.antialias == SSAA ? 2 : 1;
@@ -85,8 +115,12 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     gpuErrchk(cudaMalloc(&t_texel_quads,    sizeof(TexelQuad)  * total_texel_quads_count))
     gpuErrchk(cudaMalloc(&t_hits.wall_hits,   sizeof(WallHit) * MAX_WALL_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_hits.ground_hits,    sizeof(GroundHit)  * MAX_GROUND_HITS_COUNT))
+    gpuErrchk(cudaMalloc(&t_local_edges.data,    sizeof(LocalEdge)  * MAX_TILE_MAP_EDGES))
+    gpuErrchk(cudaMalloc(&t_columns.data,    sizeof(Circle)  * MAX_COLUMN_COUNT))
 
     uploadConstant(&t_hits, d_hits);
+    uploadConstant(&t_local_edges, d_local_edges);
+    uploadConstant(&t_columns, d_columns);
 
     TexelQuad *d_quads = t_texel_quads;
     TextureMip *d_mips = t_texture_mips;
@@ -114,10 +148,26 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     uploadConstant(&t_settings, d_settings)
 }
 
-void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count) {
-    uploadN(wall_hits, t_hits.wall_hits, wall_hits_count)
+void uploadLocalEdges(const Slice<LocalEdge>& local_edges) {
+    t_local_edges.size = local_edges.size;
+    uploadConstant(&t_local_edges, d_local_edges);
+    uploadN(local_edges.data, t_local_edges.data, local_edges.size)
+}
+
+void uploadColumns(const Slice<Circle>& columns) {
+    t_columns.size = columns.size;
+    uploadConstant(&t_columns, d_columns);
+    uploadN(columns.data, t_columns.data, columns.size)
 }
 
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {
     uploadN(ground_hits, t_hits.ground_hits, ground_hits_count)
+}
+
+void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count) {
+    uploadN(wall_hits, t_hits.wall_hits, wall_hits_count)
+}
+
+void downloadWallHits(WallHit* wall_hits, u16 wall_hits_count) {
+    downloadN(t_hits.wall_hits, wall_hits, wall_hits_count)
 }

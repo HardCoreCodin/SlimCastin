@@ -56,7 +56,7 @@ struct WallHit {
         ray_direction = new_ray_direction;
         texture_id = ray_hit.texture_id;
 
-        u = ray_hit.tile_fraction * 2.0f;
+        u = ray_hit.texture_u * 2.0f;
         z = ray_hit.perp_distance;
 
         mip = computeMip(z * pixel_coverage_factor, texel_size, mip_count);

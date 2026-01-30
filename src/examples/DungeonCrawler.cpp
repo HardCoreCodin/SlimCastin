@@ -1,5 +1,6 @@
 #include "./textures.h"
 
+#include "../slim/viewport/navigation.h"
 #include "../slim/renderer/renderer.h"
 #include "../slim/draw/hud.h"
 #include "../slim/app.h"
@@ -42,9 +43,9 @@
 // `;
 
 TileSide TILE_SIDE{};
-Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, Bounds2Di{}, true, true, true, true, true};
-Tile F_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, Bounds2Di{}, true, true, true, true, true};
-Tile T_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, Bounds2Di{}, true, true, true, true, true};
+Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
+Tile F_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
+Tile T_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
 
 Tile* F{&F_TILE};
 Tile* T{&T_TILE};
@@ -122,23 +123,22 @@ Tile* WALLS2[] = {
 
 
 struct DungeonCrawler : SlimApp {
-    bool use_gpu = USE_GPU_BY_DEFAULT;
     bool antialias = false;
 
     // HUD:
     HUDLine FPS {"FPS : "};
-    HUDLine GPU {"GPU : ", "Off", "On", &use_gpu};
+    HUDLine GPU {"GPU : ", "Off", "On", &ray_cast_renderer::useGPU};
     HUDLine AA  {"AA  : ", "Off", "On", &antialias};
     HUDLine Mode{"Mode: ", "Beauty"};
     HUD hud{{4}, &FPS};
 
 
 	// Viewport:
-	Camera camera{{0, 0 * DEG_TO_RAD, 0}, {13, 0, 3}};
-	Canvas canvas;
-	Viewport viewport{canvas, &camera};
+    Canvas canvas;
+    Camera camera{{0, 0 * DEG_TO_RAD, 0}, {13, 0, 3}};
+	Navigation navigation;
 
-	TileMap tile_map;
+    TileMap tile_map;
 	Slice<Texture> textures_slice{textures, Texture_Count};
 
 	RayCasterSettings settings;
@@ -153,15 +153,16 @@ struct DungeonCrawler : SlimApp {
 		bool tile_map_changed = false;
 
         if (!controls::is_pressed::alt) {
-	        viewport.updateNavigation(delta_time);
-        	if (viewport.navigation.moved || tile_map_changed) ray_cast_renderer::onMove(*viewport.camera, tile_map);
-        	if (viewport.navigation.moved || tile_map_changed ||
-	            viewport.navigation.turned) ray_cast_renderer::onMoveOrTurn(camera, tile_map);
+	        navigation.update(camera, delta_time);
+        	if (navigation.moved || tile_map_changed) ray_cast_renderer::onMove(camera, tile_map);
+        	if (navigation.moved || tile_map_changed ||
+	            navigation.turned ||
+	            navigation.zoomed) ray_cast_renderer::onCameraChange(camera, tile_map);
         }
     }
 
     void OnRender() override {
-        ray_cast_renderer::render(canvas, use_gpu);
+        ray_cast_renderer::render(canvas);
 
         if (hud.enabled)
             drawHUD(hud, canvas);
@@ -172,7 +173,7 @@ struct DungeonCrawler : SlimApp {
     void OnKeyChanged(u8 key, bool is_pressed) override {
         if (!is_pressed) {
             if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
-            if (key == 'G' && USE_GPU_BY_DEFAULT) use_gpu = !use_gpu;
+            if (key == 'G' && USE_GPU_BY_DEFAULT) ray_cast_renderer::toggleUseOfGPU();
             if (key == 'V') {
                 antialias = !antialias;
                 canvas.antialias = antialias ? SSAA : NoAA;
@@ -190,8 +191,8 @@ struct DungeonCrawler : SlimApp {
             }
             Mode.value.string = mode;
         }
-        Move &move = viewport.navigation.move;
-        Turn &turn = viewport.navigation.turn;
+        Move &move = navigation.move;
+        Turn &turn = navigation.turn;
         if (key == 'Q') turn.left     = is_pressed;
         if (key == 'E') turn.right    = is_pressed;
         if (key == 'R') move.up       = is_pressed;
@@ -203,12 +204,12 @@ struct DungeonCrawler : SlimApp {
     }
 
     void OnWindowResize(u16 width, u16 height) override {
-        viewport.updateDimensions(width, height);
         canvas.dimensions.update(width, height);
 
-    	if (initted) ray_cast_renderer::onResize(width, height, *viewport.camera, tile_map);
+    	if (initted) ray_cast_renderer::onResize(width, height, camera, tile_map);
     	else {
     		initted = true;
+    		ray_cast_renderer::useGPU = USE_GPU_BY_DEFAULT;
 
     		// F->bottom.portal_to = &T->right;
     		// T->right.portal_to = &F->bottom;
@@ -219,7 +220,7 @@ struct DungeonCrawler : SlimApp {
 
     		settings.init(textures_slice, Texture_ColoredStone, Texture_RedStone, tile_map.width, tile_map.height);
 
-    		ray_cast_renderer::init(&settings, viewport.dimensions, *viewport.camera, tile_map);
+    		ray_cast_renderer::init(&settings, canvas.dimensions, camera, tile_map);
     	}
     }
 

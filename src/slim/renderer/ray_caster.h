@@ -1,58 +1,15 @@
 #pragma once
 
-#include "../serialization/texture.h"
-#include "../scene/tilemap.h"
-// #include "../viewport/viewport.h"
-#include "../math/vec2.h"
-// #include "../math/vec3.h"
-
-#define MIN_DIM_FACTOR 0.0f
-#define MAX_DIM_FACTOR 1
-#define DIM_FACTOR_RANGE (MAX_DIM_FACTOR - MIN_DIM_FACTOR)
-
-#define MAX_COLOR_VALUE 0xFF
-
-// #define EPS 0.000001f
-
-// struct Plane {
-//     vec2 position, normal;
-// };
-
-f32 getU(vec2 v) {
-    f32 u = v.y / v.x;
-    if (u > 1.0f || u < -1.0f) u = -1.0f / u;
-    return (u + 1.0f) * 0.5f;
-}
-
-struct RayHit {
-    LocalEdge local_edge{};
-    vec2i tile_coords = {};
-    vec2 position = {};
-
-    f32 distance = 0.0f;
-    f32 perp_distance = 0.0f;
-    f32 tile_fraction = 0.0f;
-
-    // TileEdge* edge = nullptr;
-    const Circle* column = nullptr;
-    u8 texture_id = 0;
-};
-
-vec2 ccw90(vec2 v) { return vec2{-v.y, v.x}; }
-vec2 cw90(vec2 v) { return vec2{v.y, -v.x}; }
+#include "./render_data.h"
 
 
 struct Ray {
+    RayHit hit;
     vec2 origin;
     vec2 direction;
-    vec2 forward;
-    // vec2 primary_origin;
-    // vec2 primary_direction;
-    // vec2 primary_forward;
 
     f32 rise_over_run;
     f32 run_over_rise;
-    f32 base_distance = 0.0f;
 
     bool is_vertical;
     bool is_horizontal;
@@ -61,12 +18,10 @@ struct Ray {
     bool is_facing_left;
     bool is_facing_right;
 
-    RayHit hit;
-
-    void update(vec2 new_origin, vec2 new_direction, vec2 new_forward) {
+    INLINE_XPU void update(vec2 new_origin, vec2 new_direction) {//, vec2 new_forward) {
         origin = new_origin;
         direction = new_direction.normalized();
-        forward = new_forward;
+        // forward = new_forward;
         is_vertical     = direction.x == 0;
         is_horizontal   = direction.y == 0;
         is_facing_left  = direction.x < 0;
@@ -75,45 +30,9 @@ struct Ray {
         is_facing_down  = direction.y > 0;
         rise_over_run = direction.y / direction.x;
         run_over_rise = 1 / rise_over_run;
-        //     direction = norm2(new_direction);
-        //     origin = new_origin;
-        //     is_vertical = direction.x == 0;
-        //     is_horizontal = direction.y == 0;
-        //     is_facing_left = direction.x < 0;
-        //     is_facing_right = direction.x > 0;
-        //     is_facing_up = direction.y < 0;
-        //     is_facing_down = direction.y > 0;
-
-        //     if is_vertical {
-        //         if is_facing_down {
-        //             rise_over_run = inf;
-        //         } else {
-        //             rise_over_run = -inf;
-        //         }
-        //     } else {
-        //         rise_over_run = direction.y / direction.x;
-        //     }
-
-        //     if is_horizontal {
-        //         if is_facing_right {
-        //             rise_over_run = inf;
-        //         } else {
-        //             rise_over_run = -inf;
-        //         }
-        //     } else {
-        //         rise_over_run = direction.x / direction.y;
-        //     }
     }
 
-    // bool intersectsWithPlane(const Plane& plane, const RayHit& hit) {
-    //     f32 RD_dot_N = direction.dot(plane.normal);                if (RD_dot_N > 0.0f || -RD_dot_N < EPS) return false;
-    //     f32 RP_dot_N = plane.normal.dot(plane.position - origin);  if (RP_dot_N > 0.0f || -RP_dot_N < EPS) return false;
-    //     f32 t = RP_dot_N / RD_dot_N;
-    //     hit.position = origin + t*direction;
-    //     return true;
-    // }
-
-    void intersectsWithCircle(const Circle& circle) {
+    INLINE_XPU bool intersectsWithCircle(const Circle& circle) {
         vec2 C = circle.position - origin;
         f32 t = C.dot(direction);
         if (t > 0.0f) {
@@ -122,15 +41,15 @@ struct Ray {
                 t -= sqrt(dt);
                 if (t < hit.distance) {
                     hit.distance = t;
-                    hit.column = &circle;
+                    return true;
                 }
             }
         }
+
+        return false;
     }
 
-    bool intersectsWithEdge(const LocalEdge& local_edge) {
-        hit.local_edge = local_edge;
-
+    INLINE_XPU bool intersectsWithEdge(const LocalEdge& local_edge) {
         if (local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
             if (is_vertical ||
                 (is_facing_right && (local_edge.is & ON_THE_LEFT)) ||
@@ -154,6 +73,73 @@ struct Ray {
 
         return inRange(local_edge.from.x, hit.position.x, local_edge.to.x);
     }
+};
+
+
+struct RayCaster {
+    vec2 position;
+    vec2 forward;
+    vec2 right_step;
+    vec2 first_ray_direction;
+    u16 screen_width;
+    u16 screen_height;
+    f32 texel_size;
+    f32 pixel_coverage_factor;
+    f32 column_height_factor;
+    u8 last_mip;
+
+    void onCameraChanged(const f32 focal_length, vec2 new_forward, vec2 right) {
+        right = right.normalized() * ((f32)screen_width / (f32)screen_height);
+        forward = new_forward.normalized();
+        right_step = right / (f32)screen_width;
+        column_height_factor = focal_length * (f32)screen_height;
+        pixel_coverage_factor = focal_length / (f32)screen_height;
+        first_ray_direction = focal_length * forward + right_step * (0.5f - 0.5f * (f32)screen_width);
+    }
+
+    INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<LocalEdge> &local_edges, const Slice<Circle> &columns) {
+        ray.update(position, ray_direction);
+        closest_hit.distance = 10000000;
+
+        LocalEdge local_edge;
+        for (u16 i = 0; i < (u16)local_edges.size; i++) {
+            local_edge = local_edges[i];
+            if (ray.intersectsWithEdge(local_edge)) {
+                ray.hit.distance = ray.hit.position.squaredLength();
+                if (ray.hit.distance < closest_hit.distance) {
+                    closest_hit = ray.hit;
+                    closest_hit.local_edge_id = i;
+                }
+            }
+        }
+
+        ray.hit = closest_hit;
+        ray.hit.distance  = sqrt(closest_hit.distance);
+        ray.hit.column_id = 255;
+
+        for (u8 i = 0; i < (u8)local_edges.size; i++)
+            if (ray.intersectsWithCircle(columns[i]))
+                ray.hit.column_id = i;
+
+        ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
+
+        wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, ray.hit);
+    }
+};
+
+
+
+// vec2 ccw90(vec2 v) { return vec2{-v.y, v.x}; }
+// vec2 cw90(vec2 v) { return vec2{v.y, -v.x}; }
+
+// vec2 forward;
+// vec2 primary_origin;
+// vec2 primary_direction;
+// vec2 primary_forward;
+
+// Ray* portal_rays[MAX_WIDTH];
+// int portal_ray_indices[MAX_WIDTH];
+
     //
     // void updateToHitPortalEdge() {
     //     const TileEdge& edge = *hit.edge;
@@ -186,80 +172,66 @@ struct Ray {
     // }
     //
 
-    bool cast(const TileMap &tm, TileEdge* skip_edge = nullptr, f32 prior_hit_distance = 0.0f, bool primary_ray = true) {
-        RayHit closest_hit;
-        closest_hit.distance = 10000000;
-
-        LocalEdge *local_edge_ptr = nullptr;
-        LocalEdge local_edge;
-        iterSlice(tm.local_edges, local_edge_ptr, i) {
-            local_edge = *local_edge_ptr;
-            // if (edge != skip_edge && edge->is_facing_forward && intersectsWithEdge(*edge)) {
-            if (intersectsWithEdge(local_edge)) {
-                hit.distance = hit.position.squaredLength();
-                if (hit.distance < closest_hit.distance) {
-                    closest_hit = hit;
-                    closest_hit.local_edge = local_edge;
-                }
-            }
-        }
-
-        hit = closest_hit;
-        hit.distance  = sqrt(hit.distance) + prior_hit_distance;
-        hit.column = nullptr;
-
-        for (i32 column_id = 0; column_id < tm.column_count; column_id++)
-            intersectsWithCircle(tm.columns[column_id]);
-
-        vec2 local_hit_position = hit.position;
-
-        if (hit.column != nullptr) {
-            hit.local_edge = {};
-            hit.position = origin + direction * hit.distance;
-            hit.tile_coords.x = (i32)hit.position.x;
-            hit.tile_coords.y = (i32)hit.position.y;
-            hit.tile_fraction = getU(hit.position - hit.column->position);
-            hit.tile_fraction *= hit.column->radius;
-            hit.tile_fraction -= (f32)(i32)hit.tile_fraction;
-            hit.texture_id = 0;
-        } else {
-            // if ray.hit.edge.is_vertical {
-            //     ray.hit.tile_fraction = ray.hit.position.y - f32(ray.hit.edge.local.from.y);
-            // } else {
-            //     ray.hit.tile_fraction = ray.hit.position.x - f32(ray.hit.edge.local.from.x);
-            // }
-            // ray.hit.tile_fraction -= f32(i32(ray.hit.tile_fraction));
-            hit.position += origin;
-
-            hit.tile_coords.x = (i32)hit.position.x;
-            hit.tile_coords.y = (i32)hit.position.y;
-
-            float edge_fraction = 0.0f;
-            if (hit.local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
-                edge_fraction = local_hit_position.y - hit.local_edge.from.y;
-                if (hit.local_edge.is & FACING_RIGHT) hit.tile_coords.x -= 1;
-            } else {
-                edge_fraction = local_hit_position.x - hit.local_edge.from.x;
-                if (hit.local_edge.is & FACING_DOWN) hit.tile_coords.y -= 1;
-            }
-            hit.tile_fraction = edge_fraction - (f32)(i32)edge_fraction;
-            hit.texture_id = hit.local_edge.texture_id;
-        }
-
-        hit.perp_distance =
-            // primary_ray ?
-            forward.dot(local_hit_position);// :
-            // primary_forward.dot(primary_direction * hit.distance);
-
-        return true; //hit.edge == nullptr || hit.edge->portal_to == nullptr;
-    }
-};
-
-
-
-// Ray* portal_rays[MAX_WIDTH];
-// int portal_ray_indices[MAX_WIDTH];
-
+    // bool cast(vec2 forward, const Slice<LocalEdge> &local_edges, const Slice<Circle> &columns) { //, f32 prior_hit_distance = 0.0f, TileEdge* skip_edge = nullptr, bool primary_ray = true) {
+    //     RayHit closest_hit;
+    //     closest_hit.distance = 10000000;
+    //
+    //     LocalEdge *local_edge_ptr = nullptr;
+    //     LocalEdge local_edge;
+    //     iterSlice(local_edges, local_edge_ptr, i) {
+    //         local_edge = *local_edge_ptr;
+    //         // if (edge != skip_edge && edge->is_facing_forward && intersectsWithEdge(*edge)) {
+    //         if (intersectsWithEdge(local_edge)) {
+    //             hit.distance = hit.position.squaredLength();
+    //             if (hit.distance < closest_hit.distance) {
+    //                 closest_hit = hit;
+    //                 closest_hit.local_edge = local_edge;
+    //             }
+    //         }
+    //     }
+    //
+    //     hit = closest_hit;
+    //     hit.distance  = sqrt(hit.distance);// + prior_hit_distance;
+    //     hit.column = nullptr;
+    //
+    //     Circle *column_ptr;
+    //     iterSlice(columns, column_ptr, i)
+    //         intersectsWithCircle(*column_ptr);
+    //
+    //     vec2 local_hit_position = hit.position;
+    //
+    //     if (hit.column != nullptr) {
+    //         hit.local_edge = {};
+    //         hit.position = origin + direction * hit.distance;
+    //         hit.tile_coords.x = (i32)hit.position.x;
+    //         hit.tile_coords.y = (i32)hit.position.y;
+    //         hit.texture_u = getU(hit.position - hit.column->position);
+    //         hit.texture_u *= hit.column->radius;
+    //         hit.texture_id = 0;
+    //     } else {
+    //         hit.position += origin;
+    //
+    //         hit.tile_coords.x = (i32)hit.position.x;
+    //         hit.tile_coords.y = (i32)hit.position.y;
+    //
+    //         if (hit.local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
+    //             hit.texture_u = local_hit_position.y - hit.local_edge.from.y;
+    //             if (hit.local_edge.is & FACING_RIGHT) hit.tile_coords.x -= 1;
+    //         } else {
+    //             hit.texture_u = local_hit_position.x - hit.local_edge.from.x;
+    //             if (hit.local_edge.is & FACING_DOWN) hit.tile_coords.y -= 1;
+    //         }
+    //         hit.texture_id = hit.local_edge.texture_id;
+    //     }
+    //     hit.texture_u -= (f32)(i32)hit.texture_u;
+    //
+    //     hit.perp_distance =
+    //         // primary_ray ?
+    //         forward.dot(local_hit_position);// :
+    //         // primary_forward.dot(primary_direction * hit.distance);
+    //
+    //     return true; //hit.edge == nullptr || hit.edge->portal_to == nullptr;
+    // }
 
 // u32 castRays(TileMap& tm, vec2 position) {
 //     u32 portal_ray_count = 0;
