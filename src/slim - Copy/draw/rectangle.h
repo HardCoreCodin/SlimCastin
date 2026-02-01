@@ -110,25 +110,6 @@ void _fillRect(RectI rect, const Canvas &canvas, const Color &color, f32 opacity
                 canvas.setPixel(x, y, color, opacity);
 }
 
-void _fillRect(RectI rect, u32* window_content, const Dimensions& dimensions, const Color &color, const RectI *viewport_bounds) {
-    RectI bounds{0, dimensions.width - 1, 0, dimensions.height - 1};
-    if (viewport_bounds) {
-        bounds -= *viewport_bounds;
-        rect.x_range += viewport_bounds->left;
-        rect.y_range += viewport_bounds->top;
-    }
-    if (rect.isOutsideOf(bounds))
-        return;
-
-    rect = bounds - rect;
-    if (!rect)
-        return;
-
-    for (i32 y = rect.top; y <= rect.bottom; y++)
-        for (i32 x = rect.left; x <= rect.right; x++)
-            window_content[dimensions.width * y + x] = color.toByteColor().value;
-}
-
 
 INLINE void Canvas::drawRect(RectI rect, const Color &color, f32 opacity, const RectI *viewport_bounds) const {
     _drawRect(rect, *this, color, opacity, viewport_bounds);

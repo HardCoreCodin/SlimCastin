@@ -14,7 +14,7 @@ struct TextureMip {
     u32 width, height;
     TexelQuad *texel_quads;
 
-    INLINE_XPU Color sampleColor(f32 u, f32 v) const {
+    INLINE_XPU Pixel sample(f32 u, f32 v) const {
         if (u > 1) u -= (f32)((u32)u);
         if (v > 1) v -= (f32)((u32)v);
 
@@ -33,17 +33,11 @@ struct TextureMip {
 
         const TexelQuad texel_quad = texel_quads[y * (width + 1) + x];
         return {
-            fast_mul_add((f32)texel_quad.R.BR, br, fast_mul_add((f32)texel_quad.R.BL, bl, fast_mul_add((f32)texel_quad.R.TR, tr, (f32)texel_quad.R.TL * tl))),
-            fast_mul_add((f32)texel_quad.G.BR, br, fast_mul_add((f32)texel_quad.G.BL, bl, fast_mul_add((f32)texel_quad.G.TR, tr, (f32)texel_quad.G.TL * tl))),
-            fast_mul_add((f32)texel_quad.B.BR, br, fast_mul_add((f32)texel_quad.B.BL, bl, fast_mul_add((f32)texel_quad.B.TR, tr, (f32)texel_quad.B.TL * tl)))
+                fast_mul_add((f32)texel_quad.R.BR, br, fast_mul_add((f32)texel_quad.R.BL, bl, fast_mul_add((f32)texel_quad.R.TR, tr, (f32)texel_quad.R.TL * tl))),
+                fast_mul_add((f32)texel_quad.G.BR, br, fast_mul_add((f32)texel_quad.G.BL, bl, fast_mul_add((f32)texel_quad.G.TR, tr, (f32)texel_quad.G.TL * tl))),
+                fast_mul_add((f32)texel_quad.B.BR, br, fast_mul_add((f32)texel_quad.B.BL, bl, fast_mul_add((f32)texel_quad.B.TR, tr, (f32)texel_quad.B.TL * tl))),
+                1.0f
         };
-    }
-
-    INLINE_XPU Pixel sample(f32 u, f32 v) const {
-        return {
-            sampleColor(u, v),
-            1.0f
-    };
     }
 };
 

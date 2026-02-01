@@ -4,7 +4,7 @@
 
 
 #define USE_GPU_BY_DEFAULT true
-#define SLIM_THREADS_PER_BLOCK 256
+#define SLIM_THREADS_PER_BLOCK 48
 
 struct DeviceHits {
     WallHit* wall_hits;
@@ -12,7 +12,7 @@ struct DeviceHits {
 };
 
 __constant__ RayCasterSettings d_settings;
-__constant__ u32* d_window_content;
+__constant__ CanvasData d_canvas;
 __constant__ DeviceHits d_hits;
 __constant__ Slice<Circle> d_columns;
 __constant__ Slice<LocalEdge> d_local_edges;
@@ -20,10 +20,10 @@ __constant__ Slice<LocalEdge> d_local_edges;
 RayCasterSettings t_settings;
 Slice<Circle> t_columns;
 Slice<LocalEdge> t_local_edges;
+CanvasData t_canvas;
 DeviceHits t_hits;
 TextureMip *t_texture_mips;
 TexelQuad *t_texel_quads;
-u32* t_window_content;
 
 __global__ void d_generateWallHits(RayCaster ray_caster) {
     const u32 x = blockDim.x * blockIdx.x + threadIdx.x;
@@ -51,28 +51,35 @@ void generateWallHitsOnGPU(const RayCaster& ray_caster) {
     d_generateWallHits<<<blocks, threads>>>(ray_caster);
 }
 
-__global__ void d_render(const RayCaster ray_caster) {
+__global__ void d_render(vec2 position) {
+    const u32 s = d_canvas.antialias == SSAA ? 2 : 1;
     const u32 i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i >= (ray_caster.screen_width * (ray_caster.screen_height >> 1))) return;
+    const u32 half_screen_height = d_canvas.dimensions.height >> 1;
+    const u32 screen_height = half_screen_height << 1;
+    const u32 screen_width = d_canvas.dimensions.width;
+    if (i >= ((screen_width * half_screen_height) * s * s))
+    return;
 
-    const u16 x = (u16)(i % ray_caster.screen_width);
-    const u16 y = (u16)(i / ray_caster.screen_width);
+    u16 x = (u16)(i % (screen_width * s));
+    u16 y = (u16)(i / (screen_width * s));
 
-    const WallHit &wall_hit = d_hits.wall_hits[x];
-    const GroundHit &ground_hit = d_hits.ground_hits[y];
-
-    Color top_pixel, bot_pixel;
-    if (y < wall_hit.top)
-        renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, d_settings, top_pixel, bot_pixel);
-    else
-        renderWallPixel(wall_hit, y, d_settings, top_pixel, bot_pixel);
-
-    d_window_content[ray_caster.screen_width *                                 y  + x] = top_pixel.asContent();
-    d_window_content[ray_caster.screen_width * (ray_caster.screen_height - 1 - y) + x] = bot_pixel.asContent();
+    const vec2 tile_map_end = vec2((f32)(d_settings.tile_map_width - 1), (f32)(d_settings.tile_map_height - 1));
+    renderPixel(x, y, position, tile_map_end,
+        d_canvas.pixels, screen_width, screen_height,
+        d_hits.wall_hits[x], d_hits.ground_hits[y],
+        d_settings.textures,
+        d_settings.ceiling_texture_id,
+        d_settings.floor_texture_id);
 }
 
-void renderOnGPU(const RayCaster& ray_caster, u32* window_content) {
-    u32 pixel_count = ray_caster.screen_width * (ray_caster.screen_height >> 1);
+void renderOnGPU(const Canvas &canvas, vec2 position) {
+    t_canvas.dimensions = canvas.dimensions;
+    t_canvas.antialias = canvas.antialias;
+    uploadConstant(&t_canvas, d_canvas)
+
+    u32 sample_count = canvas.dimensions.width * (canvas.dimensions.height >> 1);
+    u32 pixel_count = sample_count * (canvas.antialias == SSAA ? 4 : 1);
+    // u32 depths_count = sample_count * (canvas.antialias == NoAA ? 1 : 4);
     u32 threads = SLIM_THREADS_PER_BLOCK;
     u32 blocks  = pixel_count / threads;
     if (pixel_count < threads) {
@@ -81,17 +88,18 @@ void renderOnGPU(const RayCaster& ray_caster, u32* window_content) {
     } else if (pixel_count % threads)
         blocks++;
 
-    d_render<<<blocks, threads>>>(ray_caster);
+    d_render<<<blocks, threads>>>(position);
 
     checkErrors()
-    downloadN(t_window_content, window_content, pixel_count * 2)
+    downloadN(t_canvas.pixels, canvas.pixels, pixel_count * 2)
+    // downloadN(t_canvas.depths, canvas.depths, depths_count)
 }
 
 
 void initDataOnGPU(const RayCasterSettings& settings) {
     t_settings = settings;
-    gpuErrchk(cudaMalloc(&t_window_content, sizeof(u32) * MAX_WINDOW_SIZE * 4))
-    uploadConstant(&t_window_content, d_window_content)
+    gpuErrchk(cudaMalloc(&t_canvas.pixels, sizeof(Pixel) * MAX_WINDOW_SIZE * 4))
+    // gpuErrchk(cudaMalloc(&t_canvas.depths, sizeof(f32) * MAX_WINDOW_SIZE * 4))
 
     u32 total_mip_count = 0;
     u32 total_texel_quads_count = 0;
@@ -137,11 +145,6 @@ void initDataOnGPU(const RayCasterSettings& settings) {
         }
     }
 
-    uploadConstant(&t_settings, d_settings)
-}
-
-void uploadSettings(const RayCasterSettings* settings) {
-    t_settings.render_mode = settings->render_mode;
     uploadConstant(&t_settings, d_settings)
 }
 

@@ -414,8 +414,9 @@ struct Sides {
 };
 
 enum RenderMode {
+    RenderMode_Normals,
+    RenderMode_NormalMap,
     RenderMode_Beauty,
-    RenderMode_Untextured,
     RenderMode_Depth,
     RenderMode_MipLevel,
     RenderMode_UVs
@@ -723,13 +724,6 @@ struct Color {
             case F0_Aluminium: red = 0.91f; green = 0.92f; blue = 0.92f; break;
             case F0_Silver: red = 0.95f; green = 0.93f; blue = 0.88f; break;
         }
-    }
-
-    INLINE_XPU u32 asContent() const {
-        u8 R = (u8)(r > 1.0f ? MAX_COLOR_VALUE : (FLOAT_TO_COLOR_COMPONENT * sqrt(r)));
-        u8 G = (u8)(g > 1.0f ? MAX_COLOR_VALUE : (FLOAT_TO_COLOR_COMPONENT * sqrt(g)));
-        u8 B = (u8)(b > 1.0f ? MAX_COLOR_VALUE : (FLOAT_TO_COLOR_COMPONENT * sqrt(b)));
-        return R << 16 | G << 8 | B;
     }
 
     INLINE_XPU Color& operator = (f32 value) {
@@ -1063,7 +1057,10 @@ struct Pixel {
     }
 
     INLINE_XPU u32 asContent() const {
-        return color.asContent();
+        u8 R = (u8)(color.r > 1.0f ? MAX_COLOR_VALUE : (FLOAT_TO_COLOR_COMPONENT * sqrt(color.r)));
+        u8 G = (u8)(color.g > 1.0f ? MAX_COLOR_VALUE : (FLOAT_TO_COLOR_COMPONENT * sqrt(color.g)));
+        u8 B = (u8)(color.b > 1.0f ? MAX_COLOR_VALUE : (FLOAT_TO_COLOR_COMPONENT * sqrt(color.b)));
+        return R << 16 | G << 8 | B;
     }
 };
 

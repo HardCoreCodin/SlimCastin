@@ -28,9 +28,6 @@ struct RayCasterSettings {
 
     FilterMode filter_mode;
     RenderMode render_mode;
-    ColorID untextured_wall_color;
-    ColorID untextured_floor_color;
-    ColorID untextured_ceiling_color;
     ColorID mip_level_colors[9];
 
     void init(
@@ -59,10 +56,6 @@ struct RayCasterSettings {
         mip_level_colors[6] = BrightGrey;
         mip_level_colors[7] = Grey;
         mip_level_colors[8] = DarkGrey;
-
-        untextured_wall_color = DarkGrey;
-        untextured_floor_color = DarkYellow;
-        untextured_ceiling_color = DarkCyan;
     }
 };
 
@@ -88,12 +81,6 @@ INLINE_XPU f32 getU(vec2 v) {
     return (u + 1.0f) * 0.5f;
 }
 
-INLINE_XPU f32 getDimFactor(f32 z) {
-    f32 dim_factor = 0.25f + z*z;
-    dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
-    dim_factor = 1.5f / dim_factor;
-    return dim_factor;
-}
 
 struct RayHit {
     vec2i tile_coords;
@@ -139,14 +126,15 @@ struct RayHit {
 };
 
 struct GroundHit {
-    f32 z, dim_factor;
+    f32 z;
     u8 mip;
     u8 flags;
 };
 
 struct WallHit {
     vec2 ray_direction;
-    f32 dim_factor, u, v, texel_step;
+    vec2 hit_position;
+    f32 u, v, texel_step;
     u16 top, height;
     u8 texture_id;
     u8 mip;
@@ -156,6 +144,7 @@ struct WallHit {
         texture_id = ray_hit.texture_id;
 
         u = ray_hit.texture_u;
+        hit_position = ray_hit.position;
         height = (u16)(column_height_factor / ray_hit.perp_distance);
         mip = computeMip(ray_hit.perp_distance * pixel_coverage_factor, texel_size, last_mip);
         texel_step = 1.0f / (f32)height;
@@ -167,6 +156,5 @@ struct WallHit {
             height = screen_height;
             top    = 0;
         }
-        dim_factor = getDimFactor(ray_hit.perp_distance);
     }
 };
