@@ -154,8 +154,9 @@ struct DungeonCrawler : SlimApp {
         	if (navigation.moved || tile_map_changed) ray_cast_renderer::onMove(camera, tile_map);
         	if (navigation.moved || tile_map_changed ||
 	            navigation.turned ||
-	            navigation.zoomed) ray_cast_renderer::onCameraChange(camera, tile_map);
+	            navigation.zoomed) ray_cast_renderer::onScreenChanged(camera, tile_map);
         }
+    	navigation.moved = navigation.turned = navigation.zoomed = false;
     }
 
     void OnRender() override {

@@ -3,7 +3,7 @@
 #include "../scene/tilemap_base.h"
 
 #define MAX_WALL_HITS_COUNT (1024*5)
-#define MAX_GROUND_HITS_COUNT 1024
+#define MAX_GROUND_HITS_COUNT (1024*2)
 
 #define RAY_CASTER_DEFAULT_SETTINGS_RENDER_MODE RenderMode_Beauty
 #define RAY_CASTER_DEFAULT_SETTINGS_FILTER_MODE FilterMode_BiLinear
@@ -147,25 +147,32 @@ struct GroundHit {
 struct WallHit {
     vec2 ray_direction;
     f32 dim_factor, u, v, texel_step;
-    u16 top, height;
+    u16 top, bot;
     u8 texture_id;
     u8 mip;
 
-    INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, const RayHit &ray_hit) {
+    INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const RayHit &ray_hit) {
         ray_direction = new_ray_direction;
         texture_id = ray_hit.texture_id;
 
         u = ray_hit.texture_u;
-        height = (u16)(column_height_factor / ray_hit.perp_distance);
+        v = 0.0f;
+
+        u16 height = (u16)(column_height_factor / ray_hit.perp_distance);
+        u16 half_height = height >> 1;
+        height = half_height << 1;
         mip = computeMip(ray_hit.perp_distance * pixel_coverage_factor, texel_size, last_mip);
         texel_step = 1.0f / (f32)height;
-        if (height < screen_height) {
-            top = (screen_height - height) >> 1;
-            v = 0.0f;
-        } else {
-            v = (f32)((height - screen_height) >> 1) / (f32)height;
-            height = screen_height;
+        bot = (u16)mid_point + half_height;
+
+        if (mid_point < half_height) {
+            v = (f32)(half_height - mid_point) / (f32)height;
             top    = 0;
+        }
+        else top = (u16)mid_point - half_height;
+
+        if (bot >= screen_height) {
+            bot = screen_height - 1;
         }
         dim_factor = getDimFactor(ray_hit.perp_distance);
     }

@@ -15,7 +15,7 @@ void uploadColumns(const Slice<Circle>& columns) {}
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
 void generateWallHitsOnGPU(const RayCaster &ray_caster) {}
 void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
-void uploadSettings(RayCasterSettings* settings)  {}
+void uploadSettings(const RayCasterSettings* settings)  {}
 #endif
 
 WallHit wall_hits[MAX_WALL_HITS_COUNT];
@@ -25,7 +25,8 @@ GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
 namespace ray_cast_renderer {
     const RayCasterSettings* settings;
     RayCaster ray_caster;
-    u16 half_screen_height;
+    f32 prior_up_aim;
+    u16 prior_screen_height;
     bool useGPU = false;
 
     void toggleUseOfGPU() {
@@ -42,22 +43,34 @@ namespace ray_cast_renderer {
     }
 
     void generateFloorAndCeilingHits() {
-        f32 screen_pixel_height = 1.0f / ((f32)half_screen_height);
-        f32 Y, Z, priorZ = 0.0f;
-        ground_hits[0].mip = 0;
-        ground_hits[0].dim_factor = getDimFactor(1.0f);
+        f32 Y = 1.0f + ray_caster.up_aim;
 
+        f32 screen_pixel_height = 2.0f / (f32)ray_caster.screen_height;
 
-        for (u16 y = 1; y < half_screen_height; y++) {
-            Y = (f32)y * screen_pixel_height;
-            Z = Y / (1.0f - Y);
+        f32 Z, priorZ = 1.0f / (Y + screen_pixel_height);
+        i32 y = 0;
+
+        for (; y < ray_caster.mid_point; y++, Y -= screen_pixel_height) {
+            Z = 1.0f / Y;
+            ground_hits[y].z = Z;
+            ground_hits[y].dim_factor = getDimFactor(Z);
             ground_hits[y].mip = computeMip(Z - priorZ, ray_caster.texel_size, ray_caster.last_mip);
-            ground_hits[y].z = Z + 1.0f;
-            ground_hits[y].dim_factor = getDimFactor(Z + 1.0f);
-
             priorZ = Z;
         }
-        uploadGroundHits(ground_hits, half_screen_height);
+
+        Y = 1.0f - ray_caster.up_aim;
+        priorZ = 1.0f / (Y + screen_pixel_height);
+        y = ray_caster.screen_height - 1;
+
+        for (; y > ray_caster.mid_point; y--, Y -= screen_pixel_height) {
+            Z = 1.0f / Y;
+            ground_hits[y].z = Z;
+            ground_hits[y].dim_factor = getDimFactor(Z);
+            ground_hits[y].mip = computeMip(Z - priorZ, ray_caster.texel_size, ray_caster.last_mip);
+            priorZ = Z;
+        }
+
+        uploadGroundHits(ground_hits, ray_caster.screen_height);
     }
 
     void generateWallHits(const TileMap& tile_map) {
@@ -72,7 +85,6 @@ namespace ray_cast_renderer {
                 ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, tile_map.local_edges, tile_map.columns);
                 wall_hits[x] = wall_hit;
             }
-            // uploadWallHits(wall_hits, ray_caster.screen_width);
         }
     }
 
@@ -84,21 +96,24 @@ namespace ray_cast_renderer {
         uploadLocalEdges(tile_map.local_edges);
     }
 
-    void onCameraChange(const Camera& camera, const TileMap& tile_map) {
+    void onScreenChanged(const Camera& camera, const TileMap& tile_map) {
         vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z);
         vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z);
-        ray_caster.onCameraChanged(camera.focal_length, forward, right);
-
+        ray_caster.onScreenChanged(camera.focal_length, forward, right, camera.orientation.Z.y);
         generateWallHits(tile_map);
+        if (prior_screen_height != ray_caster.screen_height ||
+            prior_up_aim != ray_caster.up_aim)
+            generateFloorAndCeilingHits();
+
+        prior_up_aim = ray_caster.up_aim;
     }
 
     void onResize(u16 width, u16 height, const Camera& camera, const TileMap& tile_map) {
-        half_screen_height = height >> 1;
-        if (height != ray_caster.screen_height)
-            generateFloorAndCeilingHits();
-        ray_caster.screen_height = half_screen_height << 1;
+        ray_caster.screen_height = (height >> 1) << 1;
         ray_caster.screen_width = width;
-        onCameraChange(camera, tile_map);
+        onScreenChanged(camera, tile_map);
+
+        prior_screen_height = ray_caster.screen_height;
     }
 
     void onSettingsChanged() {
@@ -107,33 +122,20 @@ namespace ray_cast_renderer {
     }
 
     void renderOnCPU(u32* window_content) {
-        Color top_pixel, bot_pixel;
+        Color pixel;
 
-        u32 offset_top = 0;
-        u32 offset_bot = 0;
-        for (u16 x = 0; x < ray_caster.screen_width; x++) {
-            WallHit wall_hit = wall_hits[x];
-            offset_top = ray_caster.screen_width *                                 wall_hit.top  + x;
-            offset_bot = ray_caster.screen_width * (ray_caster.screen_height - 1 - wall_hit.top) + x;
-            for (u16 y = wall_hit.top; y < half_screen_height; y++, offset_top += ray_caster.screen_width, offset_bot -= ray_caster.screen_width) {
-                renderWallPixel(wall_hit, y, *settings, top_pixel, bot_pixel);
-                window_content[offset_top] = top_pixel.asContent();
-                window_content[offset_bot] = bot_pixel.asContent();
-            }
-        }
-
-        offset_top = 0;
-        u32 init_offset_bot = ray_caster.screen_width * (ray_caster.screen_height - 1);
-        for (u16 y = 0; y < half_screen_height; y++, init_offset_bot -= ray_caster.screen_width) {
+        u32 offset = 0;
+        for (u16 y = 0; y < ray_caster.screen_height; y++) {
+            const bool is_ceiling = y < ray_caster.mid_point;
             GroundHit ground_hit = ground_hits[y];
-            offset_bot = init_offset_bot;
-            for (u16 x = 0; x < ray_caster.screen_width; x++, offset_top++, offset_bot++) {
+            for (u16 x = 0; x < ray_caster.screen_width; x++, offset++) {
                 WallHit wall_hit = wall_hits[x];
-                if (y < wall_hit.top) {
-                    renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, *settings, top_pixel, bot_pixel);
-                    window_content[offset_top] = top_pixel.asContent();
-                    window_content[offset_bot] = bot_pixel.asContent();
-                }
+                if (y < wall_hit.top ||
+                    y > wall_hit.bot)
+                    renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, is_ceiling, *settings, pixel);
+                else
+                    renderWallPixel(wall_hit, y, *settings, pixel);
+                window_content[offset] = pixel.asContent();
             }
         }
     }
@@ -149,6 +151,9 @@ namespace ray_cast_renderer {
         initDataOnGPU(*settings);
 
         // uploadColumns(const Slice<Circle>& columns);
+
+        prior_screen_height = 0;
+        prior_up_aim = 0.0f;
 
         onMove(camera, tile_map);
         onResize(dim.width, dim.height, camera, tile_map);

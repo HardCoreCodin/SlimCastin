@@ -28,27 +28,27 @@ add_compile_options(
         $<$<CONFIG:RELEASE>:-O2>
         $<$<CONFIG:RELEASE>:-GL>
         $<$<CONFIG:RELEASE>:-LTCG>
-#        $<$<CONFIG:RELEASE>:-Oi>
-#        $<$<CONFIG:RELEASE>:-Mt>
-#        $<$<CONFIG:DEBUG>:-JMC>
-#        $<$<CONFIG:DEBUG>:-MTd>
-#        $<$<CONFIG:DEBUG>:-Z7>
-#        -WX-
-#        -W4
-#        -wd4100
-#        -GR-
-#        -EHa-
-#        -GL
-#        -GS
-#        -FC
-#        -permissive-
-#        -sdl
-#        -nologo
-#        -analyze-
+        $<$<CONFIG:RELEASE>:-Oi>
+        $<$<CONFIG:RELEASE>:-Mt>
+        $<$<CONFIG:DEBUG>:-JMC>
+        $<$<CONFIG:DEBUG>:-MTd>
+        $<$<CONFIG:DEBUG>:-Z7>
+        -WX-
+        -W4
+        -wd4100
+        -GR-
+        -EHa-
+        -GL
+        -GS
+        -FC
+        -permissive-
+        -sdl
+        -nologo
+        -analyze-
         -fp:fast
-#        -Zc:inline
-#        -diagnostics:caret
-#        -errorReport:none
+        -Zc:inline
+        -diagnostics:caret
+        -errorReport:none
 )
 
 

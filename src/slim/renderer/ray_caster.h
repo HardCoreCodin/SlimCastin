@@ -81,20 +81,26 @@ struct RayCaster {
     vec2 forward;
     vec2 right_step;
     vec2 first_ray_direction;
+    i32 mid_point;
     u16 screen_width;
     u16 screen_height;
     f32 texel_size;
     f32 pixel_coverage_factor;
     f32 column_height_factor;
+    f32 up_aim;
+    f32 up_aim_over_focal_length;
     u8 last_mip;
 
-    void onCameraChanged(const f32 focal_length, vec2 new_forward, vec2 right) {
+    void onScreenChanged(const f32 focal_length, vec2 new_forward, vec2 right, f32 new_up_aim) {
         right = right.normalized() * ((f32)screen_width / (f32)screen_height);
         forward = new_forward.normalized();
         right_step = right / (f32)screen_width;
         column_height_factor = focal_length * (f32)screen_height;
         pixel_coverage_factor = focal_length / (f32)screen_height;
         first_ray_direction = focal_length * forward + right_step * (0.5f - 0.5f * (f32)screen_width);
+        up_aim = new_up_aim;
+        up_aim_over_focal_length = up_aim / focal_length;
+        mid_point = (i32)((1.0f + up_aim) * (f32)(screen_height >> 1));
     }
 
     INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<LocalEdge> &local_edges, const Slice<Circle> &columns) {
@@ -122,8 +128,7 @@ struct RayCaster {
                 ray.hit.column_id = i;
 
         ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
-
-        wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, ray.hit);
+        wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, ray.hit);
     }
 };
 

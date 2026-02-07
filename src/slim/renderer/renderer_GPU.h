@@ -53,7 +53,7 @@ void generateWallHitsOnGPU(const RayCaster& ray_caster) {
 
 __global__ void d_render(const RayCaster ray_caster) {
     const u32 i = blockDim.x * blockIdx.x + threadIdx.x;
-    if (i >= (ray_caster.screen_width * (ray_caster.screen_height >> 1))) return;
+    if (i >= (ray_caster.screen_width * ray_caster.screen_height)) return;
 
     const u16 x = (u16)(i % ray_caster.screen_width);
     const u16 y = (u16)(i / ray_caster.screen_width);
@@ -61,18 +61,18 @@ __global__ void d_render(const RayCaster ray_caster) {
     const WallHit &wall_hit = d_hits.wall_hits[x];
     const GroundHit &ground_hit = d_hits.ground_hits[y];
 
-    Color top_pixel, bot_pixel;
-    if (y < wall_hit.top)
-        renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, d_settings, top_pixel, bot_pixel);
+    Color pixel;
+    if (y < wall_hit.top ||
+        y > wall_hit.bot)
+        renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, y < ray_caster.mid_point, d_settings, pixel);
     else
-        renderWallPixel(wall_hit, y, d_settings, top_pixel, bot_pixel);
+        renderWallPixel(wall_hit, y, d_settings, pixel);
 
-    d_window_content[ray_caster.screen_width *                                 y  + x] = top_pixel.asContent();
-    d_window_content[ray_caster.screen_width * (ray_caster.screen_height - 1 - y) + x] = bot_pixel.asContent();
+    d_window_content[ray_caster.screen_width * y  + x] = pixel.asContent();
 }
 
 void renderOnGPU(const RayCaster& ray_caster, u32* window_content) {
-    u32 pixel_count = ray_caster.screen_width * (ray_caster.screen_height >> 1);
+    u32 pixel_count = ray_caster.screen_width * ray_caster.screen_height;
     u32 threads = SLIM_THREADS_PER_BLOCK;
     u32 blocks  = pixel_count / threads;
     if (pixel_count < threads) {

@@ -3,58 +3,51 @@
 #include "./render_data.h"
 
 
-INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterSettings& settings, Color& top_pixel, Color& bot_pixel) {
-    f32 v_top;
-    f32 v_bot;
-
+INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterSettings& settings, Color& pixel) {
+    f32 v;
     if (settings.render_mode == RenderMode_Beauty ||
         settings.render_mode == RenderMode_UVs) {
-        v_top = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
-        if (v_top > 1.0f) v_top = 1.0f;
-        v_bot = 1.0f - v_top;
+        v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
+        if (v > 1.0f)
+            v = 1.0f;
+        if (v < 0.0f)
+            v = 0.0f;
     }
     switch (settings.render_mode) {
-        case RenderMode_Beauty: {
-            const TextureMip& texture = settings.textures[wall_hit.texture_id].mips[wall_hit.mip];
-            top_pixel = texture.sampleColor(wall_hit.u, v_top) * wall_hit.dim_factor;
-            bot_pixel = texture.sampleColor(wall_hit.u, v_bot) * wall_hit.dim_factor;
-            break;
-        }
-        case RenderMode_UVs: {
-            top_pixel = Color(wall_hit.u, v_top, 0) * wall_hit.dim_factor;
-            bot_pixel = Color(wall_hit.u, v_bot, 0) * wall_hit.dim_factor;
-            break;
-        }
-        case RenderMode_Untextured: top_pixel = bot_pixel = Color(settings.untextured_wall_color) * wall_hit.dim_factor; break;
-        case RenderMode_MipLevel: top_pixel = bot_pixel = Color(settings.mip_level_colors[wall_hit.mip]) * wall_hit.dim_factor; break;
-        case RenderMode_Depth: top_pixel = bot_pixel = wall_hit.dim_factor; break;
+        case RenderMode_Beauty: pixel = settings.textures[wall_hit.texture_id].mips[wall_hit.mip].sampleColor(wall_hit.u, v) * wall_hit.dim_factor; break;
+        case RenderMode_UVs: pixel = Color(wall_hit.u, v, 0) * wall_hit.dim_factor; break;
+        case RenderMode_Untextured: pixel = Color(settings.untextured_wall_color) * wall_hit.dim_factor; break;
+        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[wall_hit.mip]) * wall_hit.dim_factor; break;
+        case RenderMode_Depth: pixel = wall_hit.dim_factor; break;
     }
 }
 
-INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, vec2 ray_direction, const RayCasterSettings& settings, Color& top_pixel, Color& bot_pixel) {
+INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, vec2 ray_direction, const bool is_ceiling, const RayCasterSettings& settings, Color& pixel) {
     vec2 uv;
-
+    pixel = ground_hit.dim_factor;
     if (settings.render_mode == RenderMode_Beauty ||
         settings.render_mode == RenderMode_UVs) {
-        uv = position + ray_direction * ground_hit.z;
-        uv.x = uv.x - (f32)(i32)uv.x;
-        uv.y = uv.y - (f32)(i32)uv.y;
+        position += ray_direction * ground_hit.z;
+        if (!inRange(vec2{0.0f, 0.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
+            pixel.green = 0.0f;
+            pixel.blue = 1.0f;
+            pixel.red = 1.0f;
+            return;
+        }
+        uv.x = position.x - (f32)(i32)position.x;
+        uv.y = position.y - (f32)(i32)position.y;
     }
 
     switch (settings.render_mode) {
-        case RenderMode_Beauty: {
-            top_pixel = settings.textures[settings.ceiling_texture_id].mips[ground_hit.mip].sampleColor(uv.x, uv.y) * ground_hit.dim_factor;
-            bot_pixel = settings.textures[settings.floor_texture_id  ].mips[ground_hit.mip].sampleColor(uv.x, uv.y) * ground_hit.dim_factor;
-            break;
-        }
-        case RenderMode_Untextured: {
-            top_pixel = Color(settings.untextured_ceiling_color) * ground_hit.dim_factor;
-            bot_pixel = Color(settings.untextured_floor_color) * ground_hit.dim_factor;
-            break;
-        }
-        case RenderMode_UVs: top_pixel = bot_pixel = Color(uv.u, uv.v, 0) * ground_hit.dim_factor; break;
-        case RenderMode_MipLevel: top_pixel = bot_pixel = Color(settings.mip_level_colors[ground_hit.mip]) * ground_hit.dim_factor; break;
-        case RenderMode_Depth: top_pixel = bot_pixel = ground_hit.dim_factor; break;
+        case RenderMode_Beauty: pixel = settings.textures[
+            is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id
+            ].mips[ground_hit.mip].sampleColor(uv.x, uv.y) * ground_hit.dim_factor; break;
+        case RenderMode_Untextured: pixel = Color(
+            is_ceiling ? settings.untextured_ceiling_color : settings.untextured_floor_color
+            ) * ground_hit.dim_factor; break;
+        case RenderMode_UVs: pixel = Color(uv.u, uv.v, 0) * ground_hit.dim_factor; break;
+        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[ground_hit.mip]) * ground_hit.dim_factor; break;
+        case RenderMode_Depth: pixel = ground_hit.dim_factor; break;
     }
 }
 

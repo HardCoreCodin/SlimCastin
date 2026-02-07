@@ -41,7 +41,7 @@ struct Navigation {
     }
 
     void orient(Camera &camera) {
-        camera.orientation.rotate(0.0f,//settings.speed.orient * -(f32)mouse::pos_raw_diff_y,
+        camera.orientation.rotate(settings.speed.orient * -(f32)mouse::pos_raw_diff_y,
                       settings.speed.orient * (f32)mouse::pos_raw_diff_x);
         mouse::moved = false;
         turned = true;
