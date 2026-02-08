@@ -3,6 +3,13 @@
 #include "./render_data.h"
 
 
+INLINE_XPU f32 light(f32 squared_distance, f32 light_intensity) {
+    squared_distance *= squared_distance;
+    squared_distance *= squared_distance;
+    return light_intensity / squared_distance;
+}
+
+
 INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterSettings& settings, Color& pixel) {
     f32 v;
     if (settings.render_mode == RenderMode_Beauty ||
@@ -13,21 +20,29 @@ INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterS
         if (v < 0.0f)
             v = 0.0f;
     }
+    f32 z2;
+    if (settings.render_mode == RenderMode_Beauty ||
+        settings.render_mode == RenderMode_Depth) {
+        z2 = v - 0.5;
+        z2 *= 2.0f;
+        z2 *= z2;
+        z2 += wall_hit.z2;
+    }
     switch (settings.render_mode) {
-        case RenderMode_Beauty: pixel = settings.textures[wall_hit.texture_id].mips[wall_hit.mip].sampleColor(wall_hit.u, v) * wall_hit.dim_factor; break;
-        case RenderMode_UVs: pixel = Color(wall_hit.u, v, 0) * wall_hit.dim_factor; break;
-        case RenderMode_Untextured: pixel = Color(settings.untextured_wall_color) * wall_hit.dim_factor; break;
-        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[wall_hit.mip]) * wall_hit.dim_factor; break;
-        case RenderMode_Depth: pixel = wall_hit.dim_factor; break;
+        case RenderMode_Beauty: pixel = settings.textures[wall_hit.texture_id].mips[wall_hit.mip].sampleColor(wall_hit.u, v) * light(z2, settings.light_intensity); break;
+        case RenderMode_UVs: pixel = Color(wall_hit.u, v, 0); break;
+        case RenderMode_Untextured: pixel = Color(settings.untextured_wall_color); break;
+        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[wall_hit.mip]); break;
+        case RenderMode_Depth: pixel = 1.0f / sqrt(z2); break;
     }
 }
 
 INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, vec2 ray_direction, const bool is_ceiling, const RayCasterSettings& settings, Color& pixel) {
     vec2 uv;
-    pixel = ground_hit.dim_factor;
     if (settings.render_mode == RenderMode_Beauty ||
         settings.render_mode == RenderMode_UVs) {
-        position += ray_direction * ground_hit.z;
+        ray_direction *= ground_hit.z;
+        position += ray_direction;
         if (!inRange(vec2{0.0f, 0.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
             pixel.green = 0.0f;
             pixel.blue = 1.0f;
@@ -37,17 +52,17 @@ INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, ve
         uv.x = position.x - (f32)(i32)position.x;
         uv.y = position.y - (f32)(i32)position.y;
     }
-
+    f32 z2;
+    if (settings.render_mode == RenderMode_Beauty ||
+        settings.render_mode == RenderMode_Depth) {
+        z2 = ray_direction.squaredLength() + 1.0f;
+    }
     switch (settings.render_mode) {
-        case RenderMode_Beauty: pixel = settings.textures[
-            is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id
-            ].mips[ground_hit.mip].sampleColor(uv.x, uv.y) * ground_hit.dim_factor; break;
-        case RenderMode_Untextured: pixel = Color(
-            is_ceiling ? settings.untextured_ceiling_color : settings.untextured_floor_color
-            ) * ground_hit.dim_factor; break;
-        case RenderMode_UVs: pixel = Color(uv.u, uv.v, 0) * ground_hit.dim_factor; break;
-        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[ground_hit.mip]) * ground_hit.dim_factor; break;
-        case RenderMode_Depth: pixel = ground_hit.dim_factor; break;
+        case RenderMode_Beauty: pixel = settings.textures[is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id].mips[ground_hit.mip].sampleColor(uv.x, uv.y) * light(z2, settings.light_intensity); break;
+        case RenderMode_Untextured: pixel = Color(is_ceiling ? settings.untextured_ceiling_color : settings.untextured_floor_color); break;
+        case RenderMode_UVs: pixel = Color(uv.u, uv.v, 0); break;
+        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[ground_hit.mip]); break;
+        case RenderMode_Depth: pixel = 1.0f / sqrt(z2); break;
     }
 }
 

@@ -142,6 +142,9 @@ struct DungeonCrawler : SlimApp {
 
 	bool initted = false;
 
+	f32 light_intensity = 6.0f;
+	f32 time = 0.0f;
+
     void OnUpdate(f32 delta_time) override {
         i32 fps = (i32)render_timer.average_frames_per_second;
         FPS.value = fps;
@@ -157,6 +160,10 @@ struct DungeonCrawler : SlimApp {
 	            navigation.zoomed) ray_cast_renderer::onScreenChanged(camera, tile_map);
         }
     	navigation.moved = navigation.turned = navigation.zoomed = false;
+
+    	time += delta_time;
+    	settings.light_intensity = light_intensity * 0.95f + sinf(time*17.0f) * light_intensity * 0.055f + cosf(time*23.0f) * light_intensity * 0.075f;
+    	ray_cast_renderer::onSettingsChanged();
     }
 
     void OnRender() override {

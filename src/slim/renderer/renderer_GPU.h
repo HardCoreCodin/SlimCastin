@@ -142,6 +142,7 @@ void initDataOnGPU(const RayCasterSettings& settings) {
 
 void uploadSettings(const RayCasterSettings* settings) {
     t_settings.render_mode = settings->render_mode;
+    t_settings.light_intensity = settings->light_intensity;
     uploadConstant(&t_settings, d_settings)
 }
 

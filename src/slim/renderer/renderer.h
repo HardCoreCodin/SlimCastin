@@ -53,8 +53,7 @@ namespace ray_cast_renderer {
         for (; y < ray_caster.mid_point; y++, Y -= screen_pixel_height) {
             Z = 1.0f / Y;
             ground_hits[y].z = Z;
-            ground_hits[y].dim_factor = getDimFactor(Z);
-            ground_hits[y].mip = computeMip(Z - priorZ, ray_caster.texel_size, ray_caster.last_mip);
+            ground_hits[y].mip = computeMip((Z - priorZ) * 0.5f, ray_caster.texel_size, ray_caster.last_mip);
             priorZ = Z;
         }
 
@@ -65,8 +64,7 @@ namespace ray_cast_renderer {
         for (; y > ray_caster.mid_point; y--, Y -= screen_pixel_height) {
             Z = 1.0f / Y;
             ground_hits[y].z = Z;
-            ground_hits[y].dim_factor = getDimFactor(Z);
-            ground_hits[y].mip = computeMip(Z - priorZ, ray_caster.texel_size, ray_caster.last_mip);
+            ground_hits[y].mip = computeMip((Z - priorZ) * 0.5f, ray_caster.texel_size, ray_caster.last_mip);
             priorZ = Z;
         }
 

@@ -96,7 +96,7 @@ struct RayCaster {
         forward = new_forward.normalized();
         right_step = right / (f32)screen_width;
         column_height_factor = focal_length * (f32)screen_height;
-        pixel_coverage_factor = focal_length / (f32)screen_height;
+        pixel_coverage_factor = 0.5f * focal_length / (f32)screen_height;
         first_ray_direction = focal_length * forward + right_step * (0.5f - 0.5f * (f32)screen_width);
         up_aim = new_up_aim;
         up_aim_over_focal_length = up_aim / focal_length;

@@ -25,6 +25,7 @@ struct RayCasterSettings {
     u8 ceiling_texture_id;
     u16 tile_map_width;
     u16 tile_map_height;
+    f32 light_intensity;
 
     FilterMode filter_mode;
     RenderMode render_mode;
@@ -63,6 +64,8 @@ struct RayCasterSettings {
         untextured_wall_color = DarkGrey;
         untextured_floor_color = DarkYellow;
         untextured_ceiling_color = DarkCyan;
+
+        light_intensity = 4.0f;
     }
 };
 
@@ -86,13 +89,6 @@ INLINE_XPU f32 getU(vec2 v) {
     f32 u = v.y / v.x;
     if (u > 1.0f || u < -1.0f) u = -1.0f / u;
     return (u + 1.0f) * 0.5f;
-}
-
-INLINE_XPU f32 getDimFactor(f32 z) {
-    f32 dim_factor = 0.25f + z*z;
-    dim_factor = dim_factor < 1.0f ? 1.0f : dim_factor;
-    dim_factor = 1.5f / dim_factor;
-    return dim_factor;
 }
 
 struct RayHit {
@@ -139,14 +135,14 @@ struct RayHit {
 };
 
 struct GroundHit {
-    f32 z, dim_factor;
+    f32 z;
     u8 mip;
     u8 flags;
 };
 
 struct WallHit {
     vec2 ray_direction;
-    f32 dim_factor, u, v, texel_step;
+    f32 z2, u, v, texel_step;
     u16 top, bot;
     u8 texture_id;
     u8 mip;
@@ -174,6 +170,6 @@ struct WallHit {
         if (bot >= screen_height) {
             bot = screen_height - 1;
         }
-        dim_factor = getDimFactor(ray_hit.perp_distance);
+        z2 = ray_direction.squaredLength() + ray_hit.perp_distance * ray_hit.perp_distance;
     }
 };
