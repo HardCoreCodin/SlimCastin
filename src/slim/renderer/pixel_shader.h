@@ -184,7 +184,7 @@ INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterS
         case RenderMode_UVs: pixel = Color(wall_hit.u, v, 0); break;
         case RenderMode_Untextured: pixel = Color(settings.untextured_wall_color); break;
         case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[wall_hit.mip]); break;
-        case RenderMode_Depth: pixel = 1.0f / sqrt(z2); break;
+        case RenderMode_Depth: pixel = 1.0f / sqrtf(z2); break;
     }
 }
 
@@ -228,7 +228,7 @@ INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, ve
         case RenderMode_Untextured: pixel = Color(is_ceiling ? settings.untextured_ceiling_color : settings.untextured_floor_color); break;
         case RenderMode_UVs: pixel = Color(uv.u, uv.v, 0); break;
         case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[ground_hit.mip]); break;
-        case RenderMode_Depth: pixel = 1.0f / sqrt(z2); break;
+        case RenderMode_Depth: pixel = 1.0f / sqrtf(z2); break;
     }
 }
 
