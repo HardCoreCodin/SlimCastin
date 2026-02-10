@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../scene/tilemap_base.h"
+#include "../math/vec3.h"
 
 #define MAX_WALL_HITS_COUNT (1024*5)
 #define MAX_GROUND_HITS_COUNT (1024*2)
@@ -26,6 +27,9 @@ struct RayCasterSettings {
     u16 tile_map_width;
     u16 tile_map_height;
     f32 light_intensity;
+    f32 light_position_x;
+    f32 light_position_y;
+    f32 light_position_z;
 
     FilterMode filter_mode;
     RenderMode render_mode;
@@ -102,6 +106,7 @@ struct RayHit {
     u16 local_edge_id;
     u8 column_id;
     u8 texture_id;
+    u8 edge_is;
 
     INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const LocalEdge *local_edges, const Circle* columns) {
         vec2 local_hit_position = position;
@@ -113,6 +118,7 @@ struct RayHit {
             texture_u = getU(position - columns[column_id].position);
             texture_u *= columns[column_id].radius;
             texture_id = 0;
+            edge_is = 0;
         } else {
             position += ray_origin;
 
@@ -127,6 +133,7 @@ struct RayHit {
                 if (local_edges[local_edge_id].is & FACING_DOWN) tile_coords.y -= 1;
             }
             texture_id = local_edges[local_edge_id].texture_id;
+            edge_is = local_edges[local_edge_id].is;
         }
 
         texture_u -= (f32)(i32)texture_u;
@@ -141,11 +148,12 @@ struct GroundHit {
 };
 
 struct WallHit {
-    vec2 ray_direction;
+    vec2 ray_direction, hit_position;
     f32 z2, u, v, texel_step;
     u16 top, bot;
     u8 texture_id;
     u8 mip;
+    u8 is;
 
     INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const RayHit &ray_hit) {
         ray_direction = new_ray_direction;
@@ -171,5 +179,7 @@ struct WallHit {
             bot = screen_height - 1;
         }
         z2 = ray_direction.squaredLength() + ray_hit.perp_distance * ray_hit.perp_distance;
+        is = ray_hit.edge_is;
+        hit_position = ray_hit.position;
     }
 };

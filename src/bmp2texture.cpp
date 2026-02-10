@@ -300,11 +300,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        auto *mips = new TextureMipLoader[texture.mip_count];
-        mips->init(texture.width, texture.height);
-        componentsToPixels(components, texture, mips->texels);
+        loader_mips = new TextureMipLoader[texture.mip_count];
+        loader_mips->init(texture.width, texture.height);
+        componentsToPixels(components, texture, loader_mips->texels);
         if (texture.flags.normal) {
-            Pixel *pixel = mips->texels;
+            Pixel *pixel = loader_mips->texels;
             for (u32 i = 0; i < texture.size; i++, pixel++) {
                 f32 r = pixel->color.r * 2.0f - 1.0f;
                 f32 g = pixel->color.g * 2.0f - 1.0f;
@@ -320,8 +320,8 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        mips->load(texture.flags.wrap);
-        if (texture.flags.mipmap) loadMips(texture, mips);
+        loader_mips->load(texture.flags.wrap);
+        if (texture.flags.mipmap) loadMips(texture, loader_mips);
     }
 
     // Create final mips with 8-bit per channel from the float channels in the mip loaders:

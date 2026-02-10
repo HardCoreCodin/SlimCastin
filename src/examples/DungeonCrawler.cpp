@@ -42,7 +42,7 @@
 // 11111111111111111111111111111111
 // `;
 
-TileSide TILE_SIDE{};
+TileSide TILE_SIDE{Texture_SoneWall12Color};
 Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
 Tile F_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
 Tile T_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
@@ -142,7 +142,7 @@ struct DungeonCrawler : SlimApp {
 
 	bool initted = false;
 
-	f32 light_intensity = 6.0f;
+	f32 light_intensity = 5.0f;
 	f32 time = 0.0f;
 
     void OnUpdate(f32 delta_time) override {
@@ -163,6 +163,9 @@ struct DungeonCrawler : SlimApp {
 
     	time += delta_time;
     	settings.light_intensity = light_intensity * 0.95f + sinf(time*17.0f) * light_intensity * 0.055f + cosf(time*23.0f) * light_intensity * 0.075f;
+    	settings.light_position_x = ray_cast_renderer::ray_caster.position.x + camera.orientation.X.x  * (sinf(time*2.7f) * 0.19f + cosf(time*2.6f) * 0.19f) + camera.orientation.Z.x  * (cosf(time*2.5f) * 0.23f + sinf(time*2.6f) * 0.155f);
+    	settings.light_position_y = ray_cast_renderer::ray_caster.position.y + sinf(time*2.0f) * 0.15f + cosf(time*2.6f) * 0.07f;
+    	settings.light_position_z = 0.15f + sinf(time*2.70f) * 0.25f + cosf(time*2.50f) * 0.15f;
     	ray_cast_renderer::onSettingsChanged();
     }
 
@@ -221,7 +224,7 @@ struct DungeonCrawler : SlimApp {
     		readTileMap(tile_map, SliceFromStaticArray(Tile*, WALLS));
     		generateTileMapEdges(tile_map);
 
-    		settings.init(textures_slice, Texture_ColoredStone, Texture_RedStone, tile_map.width, tile_map.height);
+    		settings.init(textures_slice, Texture_Ground17Color, Texture_SoneWall9Color, tile_map.width, tile_map.height);
 
     		ray_cast_renderer::init(&settings, dimensions, camera, tile_map);
     	}

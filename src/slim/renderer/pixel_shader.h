@@ -1,6 +1,8 @@
 #pragma once
 
 #include "./render_data.h"
+#include "../math/vec3.h"
+#include "../math/vec4.h"
 
 
 INLINE_XPU f32 light(f32 squared_distance, f32 light_intensity) {
@@ -8,28 +10,177 @@ INLINE_XPU f32 light(f32 squared_distance, f32 light_intensity) {
     squared_distance *= squared_distance;
     return light_intensity / squared_distance;
 }
+INLINE_XPU f32 ggxTrowbridgeReitz_D(f32 roughness, f32 NdotH) { // NDF
+    // http://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
+    f32 a = roughness * roughness;
+    f32 denom = NdotH * NdotH * (a - 1.0f) + 1.0f;
+    return (
+        a
+        /
+        (pi * denom * denom)
+    );
+}
+
+INLINE_XPU f32 ggxSchlickSmith_G(f32 roughness, f32 NdotL, f32 NdotV, bool IBL = false) {
+    // https://learnopengl.com/PBR/Theory
+    // http://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
+    f32 a = roughness * roughness;
+    f32 k = a * 0.5f; // Approximation from Karis (UE4)
+    //    if (IBL) {
+    //        k *= k * 0.5f;
+    //    } else { // direct
+    //        k += 1.0f;
+    //        k *= k * 0.125f;
+    //    }
+    f32 one_minus_k = 1.0f - k;
+    f32 denom = fast_mul_add(NdotV, one_minus_k, k);
+    f32 result = NdotV / fmaxf(denom, EPS);
+    denom = fast_mul_add(NdotL, one_minus_k, k);
+    result *= NdotL / fmaxf(denom, EPS);
+    return result;
+}
+
+INLINE_XPU Color schlickFresnel(f32 HdotL, const Color &F0) {
+    return F0 + (1.0f - F0) * powf(1.0f - HdotL, 5.0f);
+}
+
+INLINE_XPU Color cookTorrance(f32 roughness, f32 NdotL, f32 NdotV, f32 HdotL, f32 NdotH, const Color &F0, Color &F) {
+    F = schlickFresnel(HdotL, F0);
+    f32 D = ggxTrowbridgeReitz_D(roughness, NdotH);
+    f32 G = ggxSchlickSmith_G(roughness, NdotL, NdotV);
+    Color Ks = F * (D * G
+              /
+              (4.0f * NdotL * NdotV)
+    );
+    return Ks;
+}
+INLINE_XPU vec3 decodeNormal(const Color &color                                           ) {
+    vec3 N = vec3{color.r, color.b, color.g};
+    return (N * 2.0f -1.0f).normalized();
+}
+INLINE_XPU vec3 Cross(const vec3& lhs, const vec3& rhs) {
+    return vec3{
+        (lhs.y * rhs.z) - (lhs.z * rhs.y),
+        (lhs.z * rhs.x) - (lhs.x * rhs.z),
+        (lhs.x * rhs.y) - (lhs.y * rhs.x)
+    };
+}
+INLINE_XPU vec3 rotateNormal(const vec3 &Ng, const Color &normal_sample) {
+    vec3 Nm = decodeNormal(normal_sample);
+    vec3 axis = vec3{Nm.z, 0, -Nm.x}.normalized();
+    float angle = acosf(Nm.y);
+    angle *= 0.5f;
+    axis *= sinf(angle);
+    float amount = cosf(angle);
+
+    vec4 q;
+    q.x = axis.x;
+    q.y = axis.y;
+    q.z = axis.z;
+    q.w = amount;
+    q = q.normalized();
+    axis.x = q.x;
+    axis.y = q.y;
+    axis.z = q.z;
+    amount = q.w;
+
+    vec3 result{Cross(axis, Ng)};
+    vec3 qqv{Cross(axis, result)};
+    result = result * amount + qqv;
+    result = result * 2.0f +  Ng;
+
+    return result;
+}
+
+INLINE_XPU void shade(vec3 N, vec3 V, vec3 L, f32 Li, f32 roughness, Color& pixel) {
+    // R = RF = ray.direction.reflectedAround(N);
+
+    const f32 NdotV = clampedValue(N.dot(V));
+    const f32 NdotL = clampedValue(N.dot(L));
+    const vec3 R = (-V).reflectedAround(N);
+    // surface.F = schlickFresnel(clampedValue(surface.N.dot(surface.R)), surface.material->reflectivity);
+    Color F = schlickFresnel(clampedValue(N.dot(R)), 0.04f);
+
+    Color Fs = Black;
+    Color Fd = pixel;
+    // if (material->brdf == BRDF_CookTorrance) {
+        Fd *= ONE_OVER_PI;// (1.0f - material->metalness) * ONE_OVER_PI;
+
+        if (NdotV > 0.0f) { // TODO: This should not be necessary to check for, because rays would miss in that scenario so the code should never even get to this point - and yet it seems like it does.
+            // If the viewing direction is perpendicular to the normal, no light can reflect
+            // Both the numerator and denominator would evaluate to 0 in this case, resulting in NaN
+
+            // If roughness is 0 then the NDF (and hence the entire brdf) evaluates to 0
+            // Otherwise, a negative roughness makes no sense logically and would be a user-error
+            if (roughness > 0.0f) {
+                const vec3 H = (L + V).normalized();
+                const f32 NdotH = clampedValue(N.dot(H));
+                const f32 HdotL = clampedValue(H.dot(L));
+                // Fs = cookTorrance(material->roughness, NdotL, NdotV, HdotL, NdotH, material->reflectivity, F);
+                Fs = cookTorrance(max(roughness - 0.2f, 0.0f), NdotL, NdotV, HdotL, NdotH, 0.04f, F);
+                Fd *= 1.0f - F;
+            }
+        }
+    // }
+    // else {
+    //     Fd *= material->roughness * ONE_OVER_PI;
+    //
+    //     if (material->brdf != BRDF_Lambert) {
+    //         f32 specular_factor, exponent;
+    //         if (material->brdf == BRDF_Phong) {
+    //             exponent = 4.0f;
+    //             specular_factor = clampedValue(R.dot(L));
+    //         } else {
+    //             exponent = 16.0f;
+    //             specular_factor = clampedValue(N.dot((L + V).normalized()));;
+    //         }
+    //         if (specular_factor > 0.0f)
+    //             Fs = material->reflectivity * (powf(specular_factor, exponent) * (1.0f - material->roughness));
+    //     }
+    // }
+
+    pixel = (Fs + Fd) * (NdotL * Li * Color(0.95f, 0.85f, 0.75f));
+}
 
 
 INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterSettings& settings, Color& pixel) {
     f32 v;
     if (settings.render_mode == RenderMode_Beauty ||
-        settings.render_mode == RenderMode_UVs) {
+        settings.render_mode == RenderMode_UVs ||
+        settings.render_mode == RenderMode_Depth) {
         v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
         if (v > 1.0f)
             v = 1.0f;
         if (v < 0.0f)
             v = 0.0f;
     }
-    f32 z2;
+    f32 z2, Pz;
     if (settings.render_mode == RenderMode_Beauty ||
         settings.render_mode == RenderMode_Depth) {
-        z2 = v - 0.5;
-        z2 *= 2.0f;
-        z2 *= z2;
-        z2 += wall_hit.z2;
+        Pz = 0.5 - v;
+        Pz *= 2.0f;
+        z2 = wall_hit.z2 + Pz*Pz;
     }
     switch (settings.render_mode) {
-        case RenderMode_Beauty: pixel = settings.textures[wall_hit.texture_id].mips[wall_hit.mip].sampleColor(wall_hit.u, v) * light(z2, settings.light_intensity); break;
+        case RenderMode_Beauty: {
+            const f32 Li = light(z2, settings.light_intensity);
+            const vec3 LP = vec3{settings.light_position_x, settings.light_position_z, settings.light_position_y};
+            const vec3 P = vec3{wall_hit.hit_position.x, Pz, wall_hit.hit_position.y};
+            const vec3 L = (LP - P).normalized();
+            vec3 V = -vec3{wall_hit.ray_direction.x, Pz, wall_hit.ray_direction.y}.normalized();
+            vec3 N = vec3{};
+            if (     wall_hit.is & FACING_UP)   N.z =  -1.0f;
+            else if (wall_hit.is & FACING_DOWN) N.z = 1.0f;
+            else if (wall_hit.is & FACING_LEFT) N.x = -1.0f;
+            else if (wall_hit.is & FACING_RIGHT) N.x =  1.0f;
+            pixel = settings.textures[wall_hit.texture_id].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
+            Color roughness = settings.textures[wall_hit.texture_id+1].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
+            Color normalMap = settings.textures[wall_hit.texture_id+2].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
+            Color AO = settings.textures[wall_hit.texture_id+3].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
+            N = rotateNormal(N, normalMap);
+            shade(N, V, L, Li*AO.r, roughness.r, pixel);
+            break;
+        }
         case RenderMode_UVs: pixel = Color(wall_hit.u, v, 0); break;
         case RenderMode_Untextured: pixel = Color(settings.untextured_wall_color); break;
         case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[wall_hit.mip]); break;
@@ -39,6 +190,8 @@ INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterS
 
 INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, vec2 ray_direction, const bool is_ceiling, const RayCasterSettings& settings, Color& pixel) {
     vec2 uv;
+    const f32 Pz = is_ceiling ? 1.0f : -1.0f;
+    const vec3 V = -vec3{ray_direction.x, ray_direction.y, Pz}.normalized();
     if (settings.render_mode == RenderMode_Beauty ||
         settings.render_mode == RenderMode_UVs) {
         ray_direction *= ground_hit.z;
@@ -58,7 +211,20 @@ INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, ve
         z2 = ray_direction.squaredLength() + 1.0f;
     }
     switch (settings.render_mode) {
-        case RenderMode_Beauty: pixel = settings.textures[is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id].mips[ground_hit.mip].sampleColor(uv.x, uv.y) * light(z2, settings.light_intensity); break;
+        case RenderMode_Beauty: {
+            const f32 Li = light(z2, settings.light_intensity);
+            const vec3 LP = vec3{settings.light_position_x, settings.light_position_z, settings.light_position_y};
+            const vec3 P = vec3{position.x, Pz, position.y};
+            const vec3 L = (LP - P).normalized();
+            vec3 N = vec3{0.0f, -Pz, 0.0f};
+            pixel = settings.textures[is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            Color roughness = settings.textures[(is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id) + 1].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            Color normalMap = settings.textures[(is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id) + 2].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            Color AO = settings.textures[(is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id) + 3].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            N = rotateNormal(N, normalMap);
+            shade(N, V, L, Li*AO.r, roughness.r, pixel);
+            break;
+        }
         case RenderMode_Untextured: pixel = Color(is_ceiling ? settings.untextured_ceiling_color : settings.untextured_floor_color); break;
         case RenderMode_UVs: pixel = Color(uv.u, uv.v, 0); break;
         case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[ground_hit.mip]); break;
