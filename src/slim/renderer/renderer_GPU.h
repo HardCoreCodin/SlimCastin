@@ -61,12 +61,15 @@ __global__ void d_render(const RayCaster ray_caster) {
     const WallHit &wall_hit = d_hits.wall_hits[x];
     const GroundHit &ground_hit = d_hits.ground_hits[y];
 
-    Color pixel;
-    if (y < wall_hit.top ||
-        y > wall_hit.bot)
-        renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, y < ray_caster.mid_point, d_settings, pixel);
-    else
-        renderWallPixel(wall_hit, y, d_settings, pixel);
+    Color pixel{Magenta};
+    if (wall_hit.isValid()) {
+        if (y < wall_hit.top ||
+            y > wall_hit.bot)
+            renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, y < ray_caster.mid_point, d_settings, pixel);
+        else
+            renderWallPixel(wall_hit, y, d_settings, pixel);
+    }
+
 
     d_window_content[ray_caster.screen_width * y  + x] = pixel.asContent();
 }

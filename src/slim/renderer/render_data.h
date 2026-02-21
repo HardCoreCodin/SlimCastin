@@ -3,6 +3,9 @@
 #include "../scene/tilemap_base.h"
 #include "../math/vec3.h"
 
+#define INVALID_EDGE_ID ((u16)(-1))
+#define INVALID_COLUMN_ID ((u8)(-1))
+
 #define MAX_WALL_HITS_COUNT (1024*5)
 #define MAX_GROUND_HITS_COUNT (1024*2)
 
@@ -108,10 +111,18 @@ struct RayHit {
     u8 texture_id;
     u8 edge_is;
 
-    INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const LocalEdge *local_edges, const Circle* columns) {
-        vec2 local_hit_position = position;
+    INLINE_XPU void init() {
+        column_id = INVALID_COLUMN_ID;
+        local_edge_id = INVALID_EDGE_ID;
+    }
 
-        if (column_id != 255) {
+    INLINE_XPU bool isValid() {
+        return column_id != INVALID_COLUMN_ID ||
+               local_edge_id != INVALID_EDGE_ID;
+    }
+
+    INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const LocalEdge *local_edges, const Circle* columns) {
+        if (column_id != INVALID_COLUMN_ID) {
             position = ray_origin + ray_direction * distance;
             tile_coords.x = (i32)position.x;
             tile_coords.y = (i32)position.y;
@@ -119,24 +130,26 @@ struct RayHit {
             texture_u *= columns[column_id].radius;
             texture_id = 0;
             edge_is = 0;
-        } else {
-            position += ray_origin;
-
-            tile_coords.x = (i32)position.x;
-            tile_coords.y = (i32)position.y;
-
-            if (local_edges[local_edge_id].is & (FACING_LEFT | FACING_RIGHT)) {
-                texture_u = local_hit_position.y - local_edges[local_edge_id].from.y;
-                if (local_edges[local_edge_id].is & FACING_RIGHT) tile_coords.x -= 1;
-            } else {
-                texture_u = local_hit_position.x - local_edges[local_edge_id].from.x;
-                if (local_edges[local_edge_id].is & FACING_DOWN) tile_coords.y -= 1;
-            }
-            texture_id = local_edges[local_edge_id].texture_id;
-            edge_is = local_edges[local_edge_id].is;
+            perp_distance = 0;
+            return;
         }
 
+        edge_is = local_edges[local_edge_id].is;
+        texture_id = local_edges[local_edge_id].texture_id;
+
+        vec2 local_hit_position = position;
+        position += ray_origin;
+
+        tile_coords.x = edge_is & FACING_RIGHT ? (i32)position.x - 1 : (i32)position.x;
+        tile_coords.y = edge_is & FACING_DOWN  ? (i32)position.y - 1 : (i32)position.y;
+
+        texture_u = edge_is & (FACING_LEFT | FACING_RIGHT) ?
+            local_hit_position.y - local_edges[local_edge_id].from.y :
+            local_hit_position.x - local_edges[local_edge_id].from.x;
         texture_u -= (f32)(i32)texture_u;
+        if (edge_is & (FACING_RIGHT | FACING_UP))
+            texture_u = 1.0f - texture_u;
+
         perp_distance = forward.dot(local_hit_position);
     }
 };
@@ -154,6 +167,14 @@ struct WallHit {
     u8 texture_id;
     u8 mip;
     u8 is;
+
+    INLINE_XPU void init() {
+        z2 = -1.0f;
+    }
+
+    INLINE_XPU bool isValid() const {
+        return z2 > 0.0f;
+    }
 
     INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const RayHit &ray_hit) {
         ray_direction = new_ray_direction;

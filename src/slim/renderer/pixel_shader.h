@@ -95,48 +95,48 @@ INLINE_XPU vec3 rotateNormal(const vec3 &Ng, const Color &normal_sample) {
 INLINE_XPU void shade(vec3 N, vec3 V, vec3 L, f32 Li, f32 roughness, Color& pixel) {
     // R = RF = ray.direction.reflectedAround(N);
 
-    const f32 NdotV = clampedValue(N.dot(V));
+    // const f32 NdotV = clampedValue(N.dot(V));
     const f32 NdotL = clampedValue(N.dot(L));
     const vec3 R = (-V).reflectedAround(N);
     // surface.F = schlickFresnel(clampedValue(surface.N.dot(surface.R)), surface.material->reflectivity);
-    Color F = schlickFresnel(clampedValue(N.dot(R)), 0.04f);
+    // Color F = schlickFresnel(clampedValue(N.dot(R)), 0.04f);
 
     Color Fs = Black;
     Color Fd = pixel;
     // if (material->brdf == BRDF_CookTorrance) {
-        Fd *= ONE_OVER_PI;// (1.0f - material->metalness) * ONE_OVER_PI;
-
-        if (NdotV > 0.0f) { // TODO: This should not be necessary to check for, because rays would miss in that scenario so the code should never even get to this point - and yet it seems like it does.
-            // If the viewing direction is perpendicular to the normal, no light can reflect
-            // Both the numerator and denominator would evaluate to 0 in this case, resulting in NaN
-
-            // If roughness is 0 then the NDF (and hence the entire brdf) evaluates to 0
-            // Otherwise, a negative roughness makes no sense logically and would be a user-error
-            if (roughness > 0.0f) {
-                const vec3 H = (L + V).normalized();
-                const f32 NdotH = clampedValue(N.dot(H));
-                const f32 HdotL = clampedValue(H.dot(L));
-                // Fs = cookTorrance(material->roughness, NdotL, NdotV, HdotL, NdotH, material->reflectivity, F);
-                Fs = cookTorrance(max(roughness - 0.2f, 0.0f), NdotL, NdotV, HdotL, NdotH, 0.04f, F);
-                Fd *= 1.0f - F;
-            }
-        }
+        // Fd *= ONE_OVER_PI;// (1.0f - material->metalness) * ONE_OVER_PI;
+        //
+        // if (NdotV > 0.0f) { // TODO: This should not be necessary to check for, because rays would miss in that scenario so the code should never even get to this point - and yet it seems like it does.
+        //     // If the viewing direction is perpendicular to the normal, no light can reflect
+        //     // Both the numerator and denominator would evaluate to 0 in this case, resulting in NaN
+        //
+        //     // If roughness is 0 then the NDF (and hence the entire brdf) evaluates to 0
+        //     // Otherwise, a negative roughness makes no sense logically and would be a user-error
+        //     if (roughness > 0.0f) {
+        //         const vec3 H = (L + V).normalized();
+        //         const f32 NdotH = clampedValue(N.dot(H));
+        //         const f32 HdotL = clampedValue(H.dot(L));
+        //         // Fs = cookTorrance(material->roughness, NdotL, NdotV, HdotL, NdotH, material->reflectivity, F);
+        //         Fs = cookTorrance(max(roughness - 0.2f, 0.0f), NdotL, NdotV, HdotL, NdotH, 0.04f, F);
+        //         Fd *= 1.0f - F;
+        //     }
+        // }
     // }
     // else {
-    //     Fd *= material->roughness * ONE_OVER_PI;
-    //
-    //     if (material->brdf != BRDF_Lambert) {
-    //         f32 specular_factor, exponent;
-    //         if (material->brdf == BRDF_Phong) {
-    //             exponent = 4.0f;
-    //             specular_factor = clampedValue(R.dot(L));
-    //         } else {
-    //             exponent = 16.0f;
-    //             specular_factor = clampedValue(N.dot((L + V).normalized()));;
-    //         }
-    //         if (specular_factor > 0.0f)
-    //             Fs = material->reflectivity * (powf(specular_factor, exponent) * (1.0f - material->roughness));
-    //     }
+    Fd *= roughness * ONE_OVER_PI;
+
+    // if (material->brdf != BRDF_Lambert) {
+        f32 specular_factor, exponent;
+        // if (material->brdf == BRDF_Phong) {
+            exponent = 4.0f;
+            specular_factor = clampedValue(R.dot(L));
+        // } else {
+        //     exponent = 16.0f;
+        //     specular_factor = clampedValue(N.dot((L + V).normalized()));;
+        // }
+        if (specular_factor > 0.0f)
+            Fs = 0.04f * (powf(specular_factor, exponent) * (1.0f - roughness));
+    // }
     // }
 
     pixel = (Fs + Fd) * (NdotL * Li * Color(0.95f, 0.85f, 0.75f));
@@ -144,23 +144,26 @@ INLINE_XPU void shade(vec3 N, vec3 V, vec3 L, f32 Li, f32 roughness, Color& pixe
 
 
 INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterSettings& settings, Color& pixel) {
-    f32 v;
-    if (settings.render_mode == RenderMode_Beauty ||
-        settings.render_mode == RenderMode_UVs ||
-        settings.render_mode == RenderMode_Depth) {
-        v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
-        if (v > 1.0f)
-            v = 1.0f;
-        if (v < 0.0f)
-            v = 0.0f;
-    }
-    f32 z2, Pz;
-    if (settings.render_mode == RenderMode_Beauty ||
-        settings.render_mode == RenderMode_Depth) {
-        Pz = 0.5 - v;
-        Pz *= 2.0f;
-        z2 = wall_hit.z2 + Pz*Pz;
-    }
+    const f32 v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
+    const f32 Pz = (0.5f - v) * 2.0f;
+    const f32 z2 = wall_hit.z2 + Pz*Pz;
+    // f32 v;
+    // if (settings.render_mode == RenderMode_Beauty ||
+    //     settings.render_mode == RenderMode_UVs ||
+    //     settings.render_mode == RenderMode_Depth) {
+    //     v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
+    //     if (v > 1.0f)
+    //         v = 1.0f;
+    //     if (v < 0.0f)
+    //         v = 0.0f;
+    //     }
+    // f32 z2, Pz;
+    // if (settings.render_mode == RenderMode_Beauty ||
+    //     settings.render_mode == RenderMode_Depth) {
+    //     Pz = 0.5 - v;
+    //     Pz *= 2.0f;
+    //     z2 = wall_hit.z2 + Pz*Pz;
+    //     }
     switch (settings.render_mode) {
         case RenderMode_Beauty: {
             const f32 Li = light(z2, settings.light_intensity);
@@ -168,7 +171,7 @@ INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterS
             const vec3 P = vec3{wall_hit.hit_position.x, Pz, wall_hit.hit_position.y};
             const vec3 L = (LP - P).normalized();
             vec3 V = -vec3{wall_hit.ray_direction.x, Pz, wall_hit.ray_direction.y}.normalized();
-            vec3 N = vec3{};
+            vec3 N = 0.0f;
             if (     wall_hit.is & FACING_UP)   N.z =  -1.0f;
             else if (wall_hit.is & FACING_DOWN) N.z = 1.0f;
             else if (wall_hit.is & FACING_LEFT) N.x = -1.0f;
@@ -189,38 +192,51 @@ INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterS
 }
 
 INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, vec2 ray_direction, const bool is_ceiling, const RayCasterSettings& settings, Color& pixel) {
-    vec2 uv;
-    const f32 Pz = is_ceiling ? 1.0f : -1.0f;
-    const vec3 V = -vec3{ray_direction.x, ray_direction.y, Pz}.normalized();
-    if (settings.render_mode == RenderMode_Beauty ||
-        settings.render_mode == RenderMode_UVs) {
-        ray_direction *= ground_hit.z;
-        position += ray_direction;
-        if (!inRange(vec2{0.0f, 0.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
-            pixel.green = 0.0f;
-            pixel.blue = 1.0f;
-            pixel.red = 1.0f;
-            return;
-        }
-        uv.x = position.x - (f32)(i32)position.x;
-        uv.y = position.y - (f32)(i32)position.y;
+    ray_direction *= ground_hit.z;
+    position += ray_direction;
+    if (!inRange(vec2{1.0f, 1.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
+        return;
     }
-    f32 z2;
-    if (settings.render_mode == RenderMode_Beauty ||
-        settings.render_mode == RenderMode_Depth) {
-        z2 = ray_direction.squaredLength() + 1.0f;
-    }
+
+    const f32 z2 = ray_direction.squaredLength() + 1.0f;
+    const vec2 uv{
+        position.x - (f32)(i32)position.x,
+        position.y - (f32)(i32)position.y
+    };
+    // vec2 uv;
+    // const f32 Pz = is_ceiling ? 1.0f : -1.0f;
+    // const vec3 V = -vec3{ray_direction.x, ray_direction.y, Pz}.normalized();
+    // if (settings.render_mode == RenderMode_Beauty ||
+    //     settings.render_mode == RenderMode_UVs) {
+    //     ray_direction *= ground_hit.z;
+    //     position += ray_direction;
+    //     if (!inRange(vec2{0.0f, 0.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
+    //         pixel.green = 0.0f;
+    //         pixel.blue = 1.0f;
+    //         pixel.red = 1.0f;
+    //         return;
+    //     }
+    //     uv.x = position.x - (f32)(i32)position.x;
+    //     uv.y = position.y - (f32)(i32)position.y;
+    //     }
+    // f32 z2;
+    // if (settings.render_mode == RenderMode_Beauty ||
+    //     settings.render_mode == RenderMode_Depth) {
+    //     z2 = ray_direction.squaredLength() + 1.0f;
+    //     }
     switch (settings.render_mode) {
         case RenderMode_Beauty: {
+            u8 texture_id = is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id;
+            const vec3 V = -vec3{ray_direction.x, ray_direction.y, is_ceiling ? 1.0f : -1.0f}.normalized();
             const f32 Li = light(z2, settings.light_intensity);
             const vec3 LP = vec3{settings.light_position_x, settings.light_position_z, settings.light_position_y};
-            const vec3 P = vec3{position.x, Pz, position.y};
+            const vec3 P = vec3{position.x, V.z, position.y};
             const vec3 L = (LP - P).normalized();
-            vec3 N = vec3{0.0f, -Pz, 0.0f};
-            pixel = settings.textures[is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            Color roughness = settings.textures[(is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id) + 1].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            Color normalMap = settings.textures[(is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id) + 2].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            Color AO = settings.textures[(is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id) + 3].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            vec3 N = vec3{0.0f, -V.z, 0.0f};
+                      pixel = settings.textures[texture_id + 0].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            Color roughness = settings.textures[texture_id + 1].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            Color normalMap = settings.textures[texture_id + 2].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
+            Color AO        = settings.textures[texture_id + 3].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
             N = rotateNormal(N, normalMap);
             shade(N, V, L, Li*AO.r, roughness.r, pixel);
             break;

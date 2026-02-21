@@ -127,12 +127,17 @@ namespace ray_cast_renderer {
             const bool is_ceiling = y < ray_caster.mid_point;
             GroundHit ground_hit = ground_hits[y];
             for (u16 x = 0; x < ray_caster.screen_width; x++, offset++) {
+                pixel = Magenta;
+
                 WallHit wall_hit = wall_hits[x];
-                if (y < wall_hit.top ||
-                    y > wall_hit.bot)
-                    renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, is_ceiling, *settings, pixel);
-                else
-                    renderWallPixel(wall_hit, y, *settings, pixel);
+                if (wall_hit.isValid()) {
+                    if (y < wall_hit.top ||
+                        y > wall_hit.bot)
+                        renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, is_ceiling, *settings, pixel);
+                    else
+                        renderWallPixel(wall_hit, y, *settings, pixel);
+                }
+
                 window_content[offset] = pixel.asContent();
             }
         }

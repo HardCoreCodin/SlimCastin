@@ -105,7 +105,10 @@ struct RayCaster {
 
     INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<LocalEdge> &local_edges, const Slice<Circle> &columns) {
         ray.update(position, ray_direction);
+        ray.hit.init();
+        closest_hit.init();
         closest_hit.distance = 10000000;
+        wall_hit.init();
 
         LocalEdge local_edge;
         for (u16 i = 0; i < (u16)local_edges.size; i++) {
@@ -121,14 +124,15 @@ struct RayCaster {
 
         ray.hit = closest_hit;
         ray.hit.distance  = sqrt(closest_hit.distance);
-        ray.hit.column_id = 255;
 
-        for (u8 i = 0; i < (u8)local_edges.size; i++)
+        for (u8 i = 0; i < (u8)columns.size; i++)
             if (ray.intersectsWithCircle(columns[i]))
                 ray.hit.column_id = i;
 
-        ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
-        wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, ray.hit);
+        if (ray.hit.isValid()) {
+            ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
+            wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, ray.hit);
+        }
     }
 };
 

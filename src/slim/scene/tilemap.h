@@ -4,6 +4,7 @@
 
 #include <unordered_map>
 
+#include "../renderer/render_data.h"
 
 
 // struct TopLeft2Df { f32 left, top; };
@@ -93,7 +94,7 @@ struct TileMap : Grid<Tile> {
 void initTileSide(TileSide* ts) {
 	// ts->portal_from = nullptr;
 	// ts->portal_to = nullptr;
-	ts->edge_id = (u16)(-1);
+	ts->edge_id = INVALID_EDGE_ID;
 	ts->texture_id = 0;
 }
 
@@ -122,14 +123,15 @@ void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_T
 	tm.width = Width;
 	tm.height = Height;
 	tm.columns_texture_id = 0;
-	Slice<Tile> all_tiles;
-	setSliceToStaticArray(all_tiles, tm.all_tiles);
-	for (int i = 0; i < MAX_TILE_MAP_SIZE; i++) initTile(all_tiles.data + i);
+
+	for (int i = 0; i < MAX_TILE_MAP_SIZE; i++) initTile(tm.all_tiles + i);
 	setSliceToStaticArray(tm.columns, tm.all_columns);
 	setSliceToStaticArray(tm.edges, tm.all_edges);
 	setSliceToStaticArray(tm.local_edges, tm.all_local_edges);
+
+	tm.columns.size = tm.edges.size = tm.local_edges.size = 0;
 	// setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
-	initGrid<Tile>(tm, Width, Height, all_tiles);
+	initGrid<Tile>(tm, Width, Height, {&tm.all_tiles[0], ARRAY_SIZE(tm.all_tiles)});
 }
 
 

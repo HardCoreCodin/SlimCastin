@@ -185,7 +185,7 @@ struct DungeonCrawler : SlimApp {
             if (key == '3') settings.render_mode = RenderMode_Depth;
             if (key == '4') settings.render_mode = RenderMode_MipLevel;
             if (key == '5') settings.render_mode = RenderMode_UVs;
-            const char* mode;
+            const char* mode = "";
             switch (settings.render_mode) {
                 case RenderMode_Beauty:     mode = "Beauty"; break;
                 case RenderMode_Untextured: mode = "Untextured"; break;

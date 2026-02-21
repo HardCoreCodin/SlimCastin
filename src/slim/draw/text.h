@@ -149,7 +149,7 @@ void _drawText(char *str, i32 x, i32 y, const Canvas &canvas, const Color &color
             byte_ptr = char_addr[character - FIRST_CHARACTER_CODE];
             byte = *byte_ptr;
             next_column_byte = *(byte_ptr + 1);
-            for (int i = 1; i < 4; i++) {
+            for (u16 i = 1; i < 4; i++) {
                 pixel_x = current_x;
                 pixel_y = current_y + i * FONT_HEIGHT / 3;
                 for (int w = 0; w < INTERNAL_FONT_WIDTH ; w += 2) {
@@ -239,7 +239,7 @@ void _drawText(char *str, i32 x, i32 y, u32* window_content, const Dimensions& d
             byte_ptr = char_addr[character - FIRST_CHARACTER_CODE];
             byte = *byte_ptr;
             next_column_byte = *(byte_ptr + 1);
-            for (int i = 1; i < 4; i++) {
+            for (u16 i = 1; i < 4; i++) {
                 pixel_x = current_x;
                 pixel_y = current_y + i * FONT_HEIGHT / 3;
                 for (int w = 0; w < INTERNAL_FONT_WIDTH ; w += 2) {
