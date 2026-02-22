@@ -58,20 +58,12 @@ __global__ void d_render(const RayCaster ray_caster) {
     const u16 x = (u16)(i % ray_caster.screen_width);
     const u16 y = (u16)(i / ray_caster.screen_width);
 
-    const WallHit &wall_hit = d_hits.wall_hits[x];
-    const GroundHit &ground_hit = d_hits.ground_hits[y];
-
-    Color pixel{Magenta};
-    if (wall_hit.isValid()) {
-        if (y < wall_hit.top ||
-            y > wall_hit.bot)
-            renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, y < ray_caster.mid_point, d_settings, pixel);
-        else
-            renderWallPixel(wall_hit, y, d_settings, pixel);
-    }
-
-
-    d_window_content[ray_caster.screen_width * y  + x] = pixel.asContent();
+    d_window_content[ray_caster.screen_width * y  + x] = PixelShader{d_settings}.shade(
+        d_hits.ground_hits[y],
+        d_hits.wall_hits[x],
+        ray_caster.position,
+        y,
+        ray_caster.mid_point).asContent();
 }
 
 void renderOnGPU(const RayCaster& ray_caster, u32* window_content) {
@@ -145,10 +137,14 @@ void initDataOnGPU(const RayCasterSettings& settings) {
 
 void uploadSettings(const RayCasterSettings* settings) {
     t_settings.render_mode = settings->render_mode;
+    t_settings.flags = settings->flags;
     t_settings.light_intensity = settings->light_intensity;
     t_settings.light_position_x = settings->light_position_x;
     t_settings.light_position_y = settings->light_position_y;
     t_settings.light_position_z = settings->light_position_z;
+    t_settings.light_color_r = settings->light_color_r;
+    t_settings.light_color_g = settings->light_color_g;
+    t_settings.light_color_b = settings->light_color_b;
     uploadConstant(&t_settings, d_settings)
 }
 

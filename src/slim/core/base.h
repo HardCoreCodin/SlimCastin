@@ -418,7 +418,10 @@ enum RenderMode {
     RenderMode_Untextured,
     RenderMode_Depth,
     RenderMode_MipLevel,
-    RenderMode_UVs
+    RenderMode_UVs,
+    RenderMode_Color,
+    RenderMode_Normal,
+    RenderMode_Light
 };
 
 enum Axis {

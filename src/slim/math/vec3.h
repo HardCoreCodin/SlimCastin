@@ -390,6 +390,10 @@ struct vec3 {
         y = fast_mul_add(y, 0.5f, 0.5f);
         z = fast_mul_add(z, 0.5f, 0.5f);
     }
+
+    INLINE_XPU Color asColor() {
+        return {x, y, z};
+    }
 };
 
 vec3 vec3::X{1, 0, 0};

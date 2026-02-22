@@ -42,7 +42,7 @@
 // 11111111111111111111111111111111
 // `;
 
-TileSide TILE_SIDE{Texture_SoneWall12Color};
+TileSide TILE_SIDE{Texture_SoneWall9Color};
 Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
 Tile F_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
 Tile T_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
@@ -127,6 +127,7 @@ struct DungeonCrawler : SlimApp {
     HUDLine FPS {"FPS : "};
     HUDLine GPU {"GPU : ", "Off", "On", &ray_cast_renderer::useGPU};
     HUDLine Mode{"Mode: ", "Beauty"};
+    HUDLine BRDF{"Shading: ", "PBR"};
     HUD hud{{3}, &FPS};
 
 
@@ -142,7 +143,8 @@ struct DungeonCrawler : SlimApp {
 
 	bool initted = false;
 
-	f32 light_intensity = 5.0f;
+	Color light_color{0.95f, 0.85f, 0.75f};
+	f32 light_intensity = 4.0f;
 	f32 time = 0.0f;
 
     void OnUpdate(f32 delta_time) override {
@@ -163,9 +165,22 @@ struct DungeonCrawler : SlimApp {
 
     	time += delta_time;
     	settings.light_intensity = light_intensity * 0.95f + sinf(time*17.0f) * light_intensity * 0.055f + cosf(time*23.0f) * light_intensity * 0.075f;
-    	settings.light_position_x = ray_cast_renderer::ray_caster.position.x + camera.orientation.X.x  * (sinf(time*2.7f) * 0.19f + cosf(time*2.6f) * 0.19f) + camera.orientation.Z.x  * (cosf(time*2.5f) * 0.23f + sinf(time*2.6f) * 0.155f);
-    	settings.light_position_y = ray_cast_renderer::ray_caster.position.y + sinf(time*2.0f) * 0.15f + cosf(time*2.6f) * 0.07f;
-    	settings.light_position_z = 0.15f + sinf(time*2.70f) * 0.25f + cosf(time*2.50f) * 0.15f;
+    	// settings.light_position_x = ray_cast_renderer::ray_caster.position.x + camera.orientation.X.x  * (sinf(time*2.7f) * 0.19f + cosf(time*2.6f) * 0.19f) + camera.orientation.Z.x  * (cosf(time*2.5f) * 0.23f + sinf(time*2.6f) * 0.155f);
+    	// settings.light_position_y = ray_cast_renderer::ray_caster.position.y + sinf(time*2.0f) * 0.15f + cosf(time*2.6f) * 0.07f;
+    	// settings.light_position_z = 0.15f + sinf(time*2.70f) * 0.25f + cosf(time*2.50f) * 0.15f;
+
+    	vec3 light_pos = vec3{ray_cast_renderer::ray_caster.position.x, 0.0f, ray_cast_renderer::ray_caster.position.y};
+    	light_pos += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
+    	light_pos += camera.orientation.Z * 0.2f;
+    	light_pos.y += sin(time * 2.0f) * 0.3f + 0.1f;
+    	settings.light_position_x = light_pos.x;
+    	settings.light_position_y = light_pos.y;
+    	settings.light_position_z = light_pos.z;
+
+    	settings.light_color_r = light_color.r;
+    	settings.light_color_g = light_color.g - (sinf(time*29.0f) * 0.07f + cosf(time*29.0f) * 0.07f);
+    	settings.light_color_b = light_color.b - (sinf(time*19.0f) * 0.06f + cosf(time*19.0f) * 0.06f);
+
     	ray_cast_renderer::onSettingsChanged();
     }
 
@@ -179,19 +194,32 @@ struct DungeonCrawler : SlimApp {
         if (!is_pressed) {
         	RenderMode prior_render_mode = settings.render_mode;
             if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
+        	if (key == 'L') settings.flags = BRDF_Lambert | (settings.flags & USE_MAPS_MASK);
+        	if (key == 'B') settings.flags = BRDF_Blinn | (settings.flags & USE_MAPS_MASK);
+        	if (key == 'X') settings.flags = BRDF_CookTorrance | (settings.flags & USE_MAPS_MASK);
+        	if (key == 'P') settings.flags = BRDF_Phong | (settings.flags & USE_MAPS_MASK);
+        	if (key == 'O') settings.flags = settings.flags & USE_AO_MAP ? (settings.flags & ~USE_AO_MAP) : (settings.flags | USE_AO_MAP);
+        	if (key == 'N') settings.flags = settings.flags & USE_NORMAL_MAP ? (settings.flags & ~USE_NORMAL_MAP) : (settings.flags | USE_NORMAL_MAP);
+        	if (key == 'R') settings.flags = settings.flags & USE_ROUGHNESS_MAP ? (settings.flags & ~USE_ROUGHNESS_MAP) : (settings.flags | USE_ROUGHNESS_MAP);
             if (key == 'G' && USE_GPU_BY_DEFAULT) ray_cast_renderer::toggleUseOfGPU();
             if (key == '1') settings.render_mode = RenderMode_Beauty;
             if (key == '2') settings.render_mode = RenderMode_Untextured;
             if (key == '3') settings.render_mode = RenderMode_Depth;
             if (key == '4') settings.render_mode = RenderMode_MipLevel;
-            if (key == '5') settings.render_mode = RenderMode_UVs;
+        	if (key == '5') settings.render_mode = RenderMode_UVs;
+        	if (key == '6') settings.render_mode = RenderMode_Color;
+        	if (key == '7') settings.render_mode = RenderMode_Normal;
+        	if (key == '8') settings.render_mode = RenderMode_Light;
             const char* mode = "";
             switch (settings.render_mode) {
                 case RenderMode_Beauty:     mode = "Beauty"; break;
                 case RenderMode_Untextured: mode = "Untextured"; break;
                 case RenderMode_Depth:      mode = "Depth"; break;
                 case RenderMode_MipLevel:   mode = "Mip Level"; break;
-                case RenderMode_UVs:        mode = "UVs"; break;
+            	case RenderMode_UVs:        mode = "UVs"; break;
+            	case RenderMode_Color:      mode = "Color"; break;
+            	case RenderMode_Normal:     mode = "Normal"; break;
+            	case RenderMode_Light:      mode = "Lighting"; break;
             }
             Mode.value.string = mode;
         	if (settings.render_mode != prior_render_mode)
@@ -201,8 +229,8 @@ struct DungeonCrawler : SlimApp {
         Turn &turn = navigation.turn;
         if (key == 'Q') turn.left     = is_pressed;
         if (key == 'E') turn.right    = is_pressed;
-        if (key == 'R') move.up       = is_pressed;
-        if (key == 'F') move.down     = is_pressed;
+        // if (key == 'R') move.up       = is_pressed;
+        // if (key == 'F') move.down     = is_pressed;
         if (key == 'W') move.forward  = is_pressed;
         if (key == 'S') move.backward = is_pressed;
         if (key == 'A') move.left     = is_pressed;
@@ -224,7 +252,7 @@ struct DungeonCrawler : SlimApp {
     		readTileMap(tile_map, SliceFromStaticArray(Tile*, WALLS));
     		generateTileMapEdges(tile_map);
 
-    		settings.init(textures_slice, Texture_Ground17Color, Texture_SoneWall9Color, tile_map.width, tile_map.height);
+    		settings.init(textures_slice, Texture_SoneWall9Color, Texture_SoneWall6Color, tile_map.width, tile_map.height);
 
     		ray_cast_renderer::init(&settings, dimensions, camera, tile_map);
     	}

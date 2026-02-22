@@ -2,14 +2,8 @@
 
 #include "./render_data.h"
 #include "../math/vec3.h"
-#include "../math/vec4.h"
 
 
-INLINE_XPU f32 light(f32 squared_distance, f32 light_intensity) {
-    squared_distance *= squared_distance;
-    squared_distance *= squared_distance;
-    return light_intensity / squared_distance;
-}
 INLINE_XPU f32 ggxTrowbridgeReitz_D(f32 roughness, f32 NdotH) { // NDF
     // http://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
     f32 a = roughness * roughness;
@@ -40,250 +34,164 @@ INLINE_XPU f32 ggxSchlickSmith_G(f32 roughness, f32 NdotL, f32 NdotV, bool IBL =
     return result;
 }
 
-INLINE_XPU Color schlickFresnel(f32 HdotL, const Color &F0) {
+INLINE_XPU f32 schlickFresnel(f32 HdotL, const f32 &F0) {
     return F0 + (1.0f - F0) * powf(1.0f - HdotL, 5.0f);
 }
 
-INLINE_XPU Color cookTorrance(f32 roughness, f32 NdotL, f32 NdotV, f32 HdotL, f32 NdotH, const Color &F0, Color &F) {
+
+INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 HdotL, f32 NdotH, const f32 &F0, f32 &F) {
     F = schlickFresnel(HdotL, F0);
-    f32 D = ggxTrowbridgeReitz_D(roughness, NdotH);
-    f32 G = ggxSchlickSmith_G(roughness, NdotL, NdotV);
-    Color Ks = F * (D * G
-              /
-              (4.0f * NdotL * NdotV)
-    );
-    return Ks;
-}
-INLINE_XPU vec3 decodeNormal(const Color &color                                           ) {
-    vec3 N = vec3{color.r, color.b, color.g};
-    return (N * 2.0f -1.0f).normalized();
-}
-INLINE_XPU vec3 Cross(const vec3& lhs, const vec3& rhs) {
-    return vec3{
-        (lhs.y * rhs.z) - (lhs.z * rhs.y),
-        (lhs.z * rhs.x) - (lhs.x * rhs.z),
-        (lhs.x * rhs.y) - (lhs.y * rhs.x)
-    };
-}
-INLINE_XPU vec3 rotateNormal(const vec3 &Ng, const Color &normal_sample) {
-    vec3 Nm = decodeNormal(normal_sample);
-    vec3 axis = vec3{Nm.z, 0, -Nm.x}.normalized();
-    float angle = acosf(Nm.y);
-    angle *= 0.5f;
-    axis *= sinf(angle);
-    float amount = cosf(angle);
+    const f32 D = ggxTrowbridgeReitz_D(roughness, NdotH);
+    float a2 = roughness * roughness;
+    float G_V = NdotV + sqrt( (NdotV - NdotV * a2) * NdotV + a2 );
+    float G_L = NdotL + sqrt( (NdotL - NdotL * a2) * NdotL + a2 );
+    return F * D / ( G_V * G_L );
 
-    vec4 q;
-    q.x = axis.x;
-    q.y = axis.y;
-    q.z = axis.z;
-    q.w = amount;
-    q = q.normalized();
-    axis.x = q.x;
-    axis.y = q.y;
-    axis.z = q.z;
-    amount = q.w;
-
-    vec3 result{Cross(axis, Ng)};
-    vec3 qqv{Cross(axis, result)};
-    result = result * amount + qqv;
-    result = result * 2.0f +  Ng;
-
-    return result;
+    // const f32 G = ggxSchlickSmith_G(roughness, NdotL, NdotV);
+    // return F * (D * G
+              // /
+              // (4.0f * NdotL * NdotV)
+              // );
 }
 
-INLINE_XPU void shade(vec3 N, vec3 V, vec3 L, f32 Li, f32 roughness, Color& pixel) {
-    // R = RF = ray.direction.reflectedAround(N);
+struct PixelShader {
+    const RayCasterSettings& settings;
+    Color pixel;
 
-    // const f32 NdotV = clampedValue(N.dot(V));
-    const f32 NdotL = clampedValue(N.dot(L));
-    const vec3 R = (-V).reflectedAround(N);
-    // surface.F = schlickFresnel(clampedValue(surface.N.dot(surface.R)), surface.material->reflectivity);
-    // Color F = schlickFresnel(clampedValue(N.dot(R)), 0.04f);
+    INLINE_XPU const Color& shade(const GroundHit& ground_hit, const WallHit& wall_hit, const vec2& position, u16 y, i32 mid_point) {
+        pixel = Magenta;
 
-    Color Fs = Black;
-    Color Fd = pixel;
-    // if (material->brdf == BRDF_CookTorrance) {
-        // Fd *= ONE_OVER_PI;// (1.0f - material->metalness) * ONE_OVER_PI;
-        //
-        // if (NdotV > 0.0f) { // TODO: This should not be necessary to check for, because rays would miss in that scenario so the code should never even get to this point - and yet it seems like it does.
-        //     // If the viewing direction is perpendicular to the normal, no light can reflect
-        //     // Both the numerator and denominator would evaluate to 0 in this case, resulting in NaN
-        //
-        //     // If roughness is 0 then the NDF (and hence the entire brdf) evaluates to 0
-        //     // Otherwise, a negative roughness makes no sense logically and would be a user-error
-        //     if (roughness > 0.0f) {
-        //         const vec3 H = (L + V).normalized();
-        //         const f32 NdotH = clampedValue(N.dot(H));
-        //         const f32 HdotL = clampedValue(H.dot(L));
-        //         // Fs = cookTorrance(material->roughness, NdotL, NdotV, HdotL, NdotH, material->reflectivity, F);
-        //         Fs = cookTorrance(max(roughness - 0.2f, 0.0f), NdotL, NdotV, HdotL, NdotH, 0.04f, F);
-        //         Fd *= 1.0f - F;
-        //     }
-        // }
-    // }
-    // else {
-    Fd *= roughness * ONE_OVER_PI;
+        if (!wall_hit.isValid()) return pixel;
 
-    // if (material->brdf != BRDF_Lambert) {
-        f32 specular_factor, exponent;
-        // if (material->brdf == BRDF_Phong) {
-            exponent = 4.0f;
-            specular_factor = clampedValue(R.dot(L));
-        // } else {
-        //     exponent = 16.0f;
-        //     specular_factor = clampedValue(N.dot((L + V).normalized()));;
-        // }
-        if (specular_factor > 0.0f)
-            Fs = 0.04f * (powf(specular_factor, exponent) * (1.0f - roughness));
-    // }
-    // }
+        vec3 P, N, Ro;
+        f32 u, v;
+        u8 mip_level, texture_id, is;
 
-    pixel = (Fs + Fd) * (NdotL * Li * Color(0.95f, 0.85f, 0.75f));
-}
+        if (y < wall_hit.top ||
+            y > wall_hit.bot) {
+            const bool is_ceiling = y < mid_point;
 
+            const vec2 ray_hit_position = position + wall_hit.ray_direction * ground_hit.z;
+            const vec2 start = 1.0f;
+            const vec2 end = {
+                (f32)(settings.tile_map_width - 1),
+                (f32)(settings.tile_map_height - 1)
+            };
+            if (!inRange(start, ray_hit_position, end)) return pixel;
 
-INLINE_XPU void renderWallPixel(const WallHit& wall_hit, u16 y, const RayCasterSettings& settings, Color& pixel) {
-    const f32 v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
-    const f32 Pz = (0.5f - v) * 2.0f;
-    const f32 z2 = wall_hit.z2 + Pz*Pz;
-    // f32 v;
-    // if (settings.render_mode == RenderMode_Beauty ||
-    //     settings.render_mode == RenderMode_UVs ||
-    //     settings.render_mode == RenderMode_Depth) {
-    //     v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
-    //     if (v > 1.0f)
-    //         v = 1.0f;
-    //     if (v < 0.0f)
-    //         v = 0.0f;
-    //     }
-    // f32 z2, Pz;
-    // if (settings.render_mode == RenderMode_Beauty ||
-    //     settings.render_mode == RenderMode_Depth) {
-    //     Pz = 0.5 - v;
-    //     Pz *= 2.0f;
-    //     z2 = wall_hit.z2 + Pz*Pz;
-    //     }
-    switch (settings.render_mode) {
-        case RenderMode_Beauty: {
-            const f32 Li = light(z2, settings.light_intensity);
-            const vec3 LP = vec3{settings.light_position_x, settings.light_position_z, settings.light_position_y};
-            const vec3 P = vec3{wall_hit.hit_position.x, Pz, wall_hit.hit_position.y};
-            const vec3 L = (LP - P).normalized();
-            vec3 V = -vec3{wall_hit.ray_direction.x, Pz, wall_hit.ray_direction.y}.normalized();
-            vec3 N = 0.0f;
-            if (     wall_hit.is & FACING_UP)   N.z =  -1.0f;
-            else if (wall_hit.is & FACING_DOWN) N.z = 1.0f;
-            else if (wall_hit.is & FACING_LEFT) N.x = -1.0f;
-            else if (wall_hit.is & FACING_RIGHT) N.x =  1.0f;
-            pixel = settings.textures[wall_hit.texture_id].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
-            Color roughness = settings.textures[wall_hit.texture_id+1].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
-            Color normalMap = settings.textures[wall_hit.texture_id+2].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
-            Color AO = settings.textures[wall_hit.texture_id+3].mips[wall_hit.mip].sampleColor(wall_hit.u, v);
-            N = rotateNormal(N, normalMap);
-            shade(N, V, L, Li*AO.r, roughness.r, pixel);
-            break;
+            mip_level = ground_hit.mip;
+            v = ray_hit_position.y - (f32)(i32)ray_hit_position.y;
+            u = ray_hit_position.x - (f32)(i32)ray_hit_position.x;
+            is = is_ceiling ? ABOVE : BELOW;
+            texture_id = is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id;
+            Ro.x = position.x;
+            Ro.z = position.y;
+            Ro.y = 0.0f;
+            P.x = ray_hit_position.x;
+            P.z = ray_hit_position.y;
+            P.y = is_ceiling ? 1.0f : -1.0f;
+        } else {
+            mip_level = wall_hit.mip;
+            v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
+            u = wall_hit.u;
+            is = wall_hit.is;
+            texture_id = wall_hit.texture_id;
+            Ro.x = position.x;
+            Ro.z = position.y;
+            Ro.y = 0.0f;
+            P.x = wall_hit.hit_position.x;
+            P.z = wall_hit.hit_position.y;
+            P.y = (1.0f - v) * 2.0f - 1.0f;
         }
-        case RenderMode_UVs: pixel = Color(wall_hit.u, v, 0); break;
-        case RenderMode_Untextured: pixel = Color(settings.untextured_wall_color); break;
-        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[wall_hit.mip]); break;
-        case RenderMode_Depth: pixel = 1.0f / sqrtf(z2); break;
-    }
-}
 
-INLINE_XPU void renderGroundPixel(const GroundHit& ground_hit, vec2 position, vec2 ray_direction, const bool is_ceiling, const RayCasterSettings& settings, Color& pixel) {
-    ray_direction *= ground_hit.z;
-    position += ray_direction;
-    if (!inRange(vec2{1.0f, 1.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
-        return;
-    }
+        if (settings.render_mode == RenderMode_Beauty ||
+            settings.render_mode == RenderMode_Color)
+            pixel = settings.textures[texture_id].mips[mip_level].sampleColor(u, v);
+        else if (settings.render_mode == RenderMode_Light)
+            pixel = White;
 
-    const f32 z2 = ray_direction.squaredLength() + 1.0f;
-    const vec2 uv{
-        position.x - (f32)(i32)position.x,
-        position.y - (f32)(i32)position.y
-    };
-    // vec2 uv;
-    // const f32 Pz = is_ceiling ? 1.0f : -1.0f;
-    // const vec3 V = -vec3{ray_direction.x, ray_direction.y, Pz}.normalized();
-    // if (settings.render_mode == RenderMode_Beauty ||
-    //     settings.render_mode == RenderMode_UVs) {
-    //     ray_direction *= ground_hit.z;
-    //     position += ray_direction;
-    //     if (!inRange(vec2{0.0f, 0.0f}, position, vec2{(f32)(settings.tile_map_width - 1), (f32)(settings.tile_map_height - 1)})) {
-    //         pixel.green = 0.0f;
-    //         pixel.blue = 1.0f;
-    //         pixel.red = 1.0f;
-    //         return;
-    //     }
-    //     uv.x = position.x - (f32)(i32)position.x;
-    //     uv.y = position.y - (f32)(i32)position.y;
-    //     }
-    // f32 z2;
-    // if (settings.render_mode == RenderMode_Beauty ||
-    //     settings.render_mode == RenderMode_Depth) {
-    //     z2 = ray_direction.squaredLength() + 1.0f;
-    //     }
-    switch (settings.render_mode) {
-        case RenderMode_Beauty: {
-            u8 texture_id = is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id;
-            const vec3 V = -vec3{ray_direction.x, ray_direction.y, is_ceiling ? 1.0f : -1.0f}.normalized();
-            const f32 Li = light(z2, settings.light_intensity);
-            const vec3 LP = vec3{settings.light_position_x, settings.light_position_z, settings.light_position_y};
-            const vec3 P = vec3{position.x, V.z, position.y};
-            const vec3 L = (LP - P).normalized();
-            vec3 N = vec3{0.0f, -V.z, 0.0f};
-                      pixel = settings.textures[texture_id + 0].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            Color roughness = settings.textures[texture_id + 1].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            Color normalMap = settings.textures[texture_id + 2].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            Color AO        = settings.textures[texture_id + 3].mips[ground_hit.mip].sampleColor(uv.x, uv.y);
-            N = rotateNormal(N, normalMap);
-            shade(N, V, L, Li*AO.r, roughness.r, pixel);
-            break;
+        N = {0.0f, 0.0f, 1.0f};
+        if (settings.render_mode == RenderMode_Beauty ||
+            settings.render_mode == RenderMode_Normal ||
+            settings.render_mode == RenderMode_Light) {
+            if (settings.flags & USE_NORMAL_MAP)
+                N = vec3{settings.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
+            if      (is & FACING_DOWN ) N = {   N.x,   N.y,    N.z};
+            else if (is & FACING_UP   ) N = {  -N.x,   N.y,   -N.z};
+            else if (is & FACING_LEFT ) N = {-N.z,   N.y,  N.x};
+            else if (is & FACING_RIGHT) N = { N.z,   N.y, -N.x};
+            else if (is & ABOVE)        N = {   N.x,-N.z, -N.y};
+            else if (is & BELOW)        N = {   N.x, N.z, -N.y};
         }
-        case RenderMode_Untextured: pixel = Color(is_ceiling ? settings.untextured_ceiling_color : settings.untextured_floor_color); break;
-        case RenderMode_UVs: pixel = Color(uv.u, uv.v, 0); break;
-        case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[ground_hit.mip]); break;
-        case RenderMode_Depth: pixel = 1.0f / sqrtf(z2); break;
+
+        switch (settings.render_mode) {
+            case RenderMode_Color: break;
+            case RenderMode_UVs: pixel = Color(u, v, 0); break;
+            case RenderMode_Depth: pixel = 1.0f / (Ro - P).length(); break;
+            case RenderMode_Normal: pixel = N.scaleAdd(0.5, 0.5f).asColor(); break;
+            case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[mip_level]); break;
+            case RenderMode_Untextured: pixel = Color(
+                is == ABOVE ?
+                    settings.untextured_ceiling_color :
+                    (is == BELOW ?
+                        settings.untextured_floor_color :
+                        settings.untextured_wall_color)); break;
+            default: {
+                const vec3 V{(Ro - P).normalized()};
+                const vec3 LP = vec3{settings.light_position_x, settings.light_position_y, settings.light_position_z};
+                vec3 L = LP - P;
+                const f32 attenuation = 1.0f / L.squaredLength();
+                L *= sqrt(attenuation);
+                f32 Li = settings.light_intensity * attenuation * attenuation;
+                f32 roughness = 1.0f;
+                if (settings.flags & USE_ROUGHNESS_MAP)
+                    roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
+                if (settings.flags & USE_AO_MAP)
+                    Li *=  settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
+
+                roughness *= roughness;
+                roughness *= roughness;
+                // roughness = max(0.0f,roughness - 0.2f);
+
+                const f32 NdotL = clampedValue(N.dot(L));
+
+                f32 Fs = 0.0f;
+                Color Fd = pixel;
+                const BRDFType brdf{(BRDFType)(settings.flags & (~USE_MAPS_MASK))};
+                if (brdf == BRDF_CookTorrance) {
+                    Fd *= ONE_OVER_PI;// (1.0f - material->metalness) * ONE_OVER_PI;
+
+                    const f32 NdotV = clampedValue(N.dot(V));
+                    if (NdotV > 0.0f && roughness > 0.0f) {
+                        // const vec3 R = (-V).reflectedAround(N);
+                        // Color F = schlickFresnel(clampedValue(N.dot(R)), 0.04f);
+                        const vec3 H = (L + V).normalized();
+                        const f32 NdotH = clampedValue(N.dot(H));
+                        const f32 HdotL = clampedValue(H.dot(L));
+                        f32 F;
+                        Fs = GGX(roughness, NdotL, NdotV, HdotL, NdotH, 0.04f, F);
+                        Fd *= 1.0f - F;
+                    }
+                } else if (brdf != BRDF_Lambert) {
+                    Fd *= roughness * ONE_OVER_PI;
+
+                    f32 specular_factor, exponent;
+                    if (brdf == BRDF_Phong) {
+                        const vec3 R = (-V).reflectedAround(N);
+                        exponent = 4.0f;
+                        specular_factor = clampedValue(R.dot(L));
+                    } else {
+                        exponent = 16.0f;
+                        specular_factor = clampedValue(N.dot((L + V).normalized()));;
+                    }
+                    if (specular_factor > 0.0f)
+                        Fs = 0.04f * (powf(specular_factor, exponent) * (1.0f - roughness));
+                }
+
+                pixel = (Fs + Fd) * (NdotL * Li * Color(settings.light_color_r, settings.light_color_g, settings.light_color_b));
+            }
+        }
+
+        return pixel;
     }
-}
-
-
-//
-// INLINE_XPU void renderPixel(u16 x, u16 y, vec2 position, vec2 tile_map_end,
-//     Pixel& top_pixel, Pixel& bot_pixel,
-//     const WallHit& wall_hit, const GroundHit& ground_hit,
-//     const Texture* textures, u16 top_texture_id, u16 bot_texture_id) {
-//     u8 mip = 255;
-//     f32 dim_factor, u, v_top, v_bot;
-//     vec2 hit_position;
-//     if (y < wall_hit.top) {
-//         hit_position = position + wall_hit.ray_direction * ground_hit.z;
-//         if (inRange({}, hit_position, tile_map_end)) {
-//             u             = hit_position.x - (f32)(i32)hit_position.x;
-//             v_top = v_bot = hit_position.y - (f32)(i32)hit_position.y;
-//             mip = ground_hit.mip;
-//             dim_factor = ground_hit.dim_factor;
-//         }
-//     } else {
-//         u = wall_hit.u;
-//         v_top = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
-//         if (v_top > 1.0f) v_top = 1.0f;
-//         v_bot = 1.0f - v_top;
-//         mip = wall_hit.mip;
-//         dim_factor = wall_hit.dim_factor;
-//         // hit_position = wall_hit.hit_position;
-//         top_texture_id = bot_texture_id = wall_hit.texture_id;
-//     }
-//
-//     if (mip == 255) {
-//         Pixel magenta{1.0f, 0.0f, 1.0f, 1.0f};
-//         top_pixel = magenta;
-//         top_pixel = bot_pixel = magenta;
-//     } else {
-//         top_pixel = textures[top_texture_id].mips[mip].sample(u, v_top) * dim_factor;
-//         bot_pixel = textures[bot_texture_id].mips[mip].sample(u, v_bot) * dim_factor;
-//         // top_pixel = pixel * dim_factor;
-//         // bot_pixel = pixel * dim_factor;
-//     }
-// }
+};

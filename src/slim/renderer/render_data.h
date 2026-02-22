@@ -15,6 +15,11 @@
 INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
 INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
 
+#define USE_ROUGHNESS_MAP (1 << 5)
+#define USE_AO_MAP        (1 << 6)
+#define USE_NORMAL_MAP    (1 << 7)
+
+#define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
 
 enum FilterMode {
     FilterMode_None,
@@ -27,12 +32,16 @@ struct RayCasterSettings {
     u8 textures_count;
     u8 floor_texture_id;
     u8 ceiling_texture_id;
+    u8 flags;
     u16 tile_map_width;
     u16 tile_map_height;
     f32 light_intensity;
     f32 light_position_x;
     f32 light_position_y;
     f32 light_position_z;
+    f32 light_color_r;
+    f32 light_color_g;
+    f32 light_color_b;
 
     FilterMode filter_mode;
     RenderMode render_mode;
@@ -71,6 +80,8 @@ struct RayCasterSettings {
         untextured_wall_color = DarkGrey;
         untextured_floor_color = DarkYellow;
         untextured_ceiling_color = DarkCyan;
+
+        flags = (u8)BRDF_CookTorrance | USE_MAPS_MASK;
 
         light_intensity = 4.0f;
     }

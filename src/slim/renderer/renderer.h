@@ -120,25 +120,16 @@ namespace ray_cast_renderer {
     }
 
     void renderOnCPU(u32* window_content) {
-        Color pixel;
-
         u32 offset = 0;
         for (u16 y = 0; y < ray_caster.screen_height; y++) {
-            const bool is_ceiling = y < ray_caster.mid_point;
             GroundHit ground_hit = ground_hits[y];
             for (u16 x = 0; x < ray_caster.screen_width; x++, offset++) {
-                pixel = Magenta;
-
-                WallHit wall_hit = wall_hits[x];
-                if (wall_hit.isValid()) {
-                    if (y < wall_hit.top ||
-                        y > wall_hit.bot)
-                        renderGroundPixel(ground_hit, ray_caster.position, wall_hit.ray_direction, is_ceiling, *settings, pixel);
-                    else
-                        renderWallPixel(wall_hit, y, *settings, pixel);
-                }
-
-                window_content[offset] = pixel.asContent();
+                window_content[offset] = PixelShader{*settings}.shade(
+                    ground_hit,
+                    wall_hits[x],
+                    ray_caster.position,
+                    y,
+                    ray_caster.mid_point).asContent();
             }
         }
     }
