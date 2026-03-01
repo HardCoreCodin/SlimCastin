@@ -173,18 +173,18 @@ struct GroundHit {
 
 struct WallHit {
     vec2 ray_direction, hit_position;
-    f32 z2, u, v, texel_step;
+    f32 u, v, texel_step;
     u16 top, bot;
     u8 texture_id;
     u8 mip;
     u8 is;
 
     INLINE_XPU void init() {
-        z2 = -1.0f;
+        v = -1.0f;
     }
 
     INLINE_XPU bool isValid() const {
-        return z2 > 0.0f;
+        return v >= 0.0f;
     }
 
     INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const RayHit &ray_hit) {
@@ -207,10 +207,9 @@ struct WallHit {
         }
         else top = (u16)mid_point - half_height;
 
-        if (bot >= screen_height) {
+        if (bot >= screen_height)
             bot = screen_height - 1;
-        }
-        z2 = ray_direction.squaredLength() + ray_hit.perp_distance * ray_hit.perp_distance;
+
         is = ray_hit.edge_is;
         hit_position = ray_hit.position;
     }

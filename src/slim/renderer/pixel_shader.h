@@ -39,19 +39,17 @@ INLINE_XPU f32 schlickFresnel(f32 HdotL, const f32 &F0) {
 }
 
 
-INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 HdotL, f32 NdotH, const f32 &F0, f32 &F) {
-    F = schlickFresnel(HdotL, F0);
-    const f32 D = ggxTrowbridgeReitz_D(roughness, NdotH);
+INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 NdotH) {
     float a2 = roughness * roughness;
+    const f32 D = ggxTrowbridgeReitz_D(a2, NdotH);
     float G_V = NdotV + sqrt( (NdotV - NdotV * a2) * NdotV + a2 );
     float G_L = NdotL + sqrt( (NdotL - NdotL * a2) * NdotL + a2 );
-    return F * D / ( G_V * G_L );
+    return D / ( G_V * G_L );
 
-    // const f32 G = ggxSchlickSmith_G(roughness, NdotL, NdotV);
-    // return F * (D * G
-              // /
-              // (4.0f * NdotL * NdotV)
-              // );
+    const f32 G = ggxSchlickSmith_G(a2, NdotL, NdotV);
+    return D * G
+              /
+              (4.0f * NdotL * NdotV);
 }
 
 struct PixelShader {
@@ -143,52 +141,47 @@ struct PixelShader {
                 const f32 attenuation = 1.0f / L.squaredLength();
                 L *= sqrt(attenuation);
                 f32 Li = settings.light_intensity * attenuation * attenuation;
+
+                Color light{settings.light_color_r, settings.light_color_g, settings.light_color_b};
+                f32 ambient_light = 0.1f;
+                if (settings.flags & USE_AO_MAP)
+                    ambient_light *= settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
+
                 f32 roughness = 1.0f;
                 if (settings.flags & USE_ROUGHNESS_MAP)
                     roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
-                if (settings.flags & USE_AO_MAP)
-                    Li *=  settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
-
-                roughness *= roughness;
-                roughness *= roughness;
-                // roughness = max(0.0f,roughness - 0.2f);
 
                 const f32 NdotL = clampedValue(N.dot(L));
 
                 f32 Fs = 0.0f;
-                Color Fd = pixel;
-                const BRDFType brdf{(BRDFType)(settings.flags & (~USE_MAPS_MASK))};
-                if (brdf == BRDF_CookTorrance) {
-                    Fd *= ONE_OVER_PI;// (1.0f - material->metalness) * ONE_OVER_PI;
+                f32 F = 0.0f;
 
+                const BRDFType brdf{(BRDFType)(settings.flags & 3)};
+                if (brdf == BRDF_CookTorrance) {
+                    const vec3 H = (L + V).normalized();
+                    const f32 NdotH = clampedValue(N.dot(H));
+                    F = schlickFresnel(clampedValue(H.dot(L)), 0.04f);
                     const f32 NdotV = clampedValue(N.dot(V));
+
                     if (NdotV > 0.0f && roughness > 0.0f) {
-                        // const vec3 R = (-V).reflectedAround(N);
-                        // Color F = schlickFresnel(clampedValue(N.dot(R)), 0.04f);
-                        const vec3 H = (L + V).normalized();
-                        const f32 NdotH = clampedValue(N.dot(H));
-                        const f32 HdotL = clampedValue(H.dot(L));
-                        f32 F;
-                        Fs = GGX(roughness, NdotL, NdotV, HdotL, NdotH, 0.04f, F);
-                        Fd *= 1.0f - F;
+                        Fs = GGX(roughness, NdotL, NdotV, NdotH);
                     }
                 } else if (brdf != BRDF_Lambert) {
-                    Fd *= roughness * ONE_OVER_PI;
-
-                    f32 specular_factor, exponent;
+                    F = roughness;
+                    f32 exponent = 16.0f;
+                    f32 specular_factor = 0.0f;
                     if (brdf == BRDF_Phong) {
-                        const vec3 R = (-V).reflectedAround(N);
                         exponent = 4.0f;
+                        const vec3 R = (-V).reflectedAround(N);
                         specular_factor = clampedValue(R.dot(L));
-                    } else {
-                        exponent = 16.0f;
-                        specular_factor = clampedValue(N.dot((L + V).normalized()));;
+                    } else { // BLINN
+                        clampedValue(N.dot((L + V).normalized()));
                     }
                     if (specular_factor > 0.0f)
-                        Fs = 0.04f * (powf(specular_factor, exponent) * (1.0f - roughness));
+                        Fs = powf(specular_factor, exponent);
                 }
 
-                pixel = (Fs + Fd) * (NdotL * Li * Color(settings.light_color_r, settings.light_color_g, settings.light_color_b));
+                pixel *= Li * (ambient_light + light * (NdotL * lerp(Fs, ONE_OVER_PI, F)));
             }
         }
 

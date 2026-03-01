@@ -267,6 +267,10 @@ INLINE_XPU f32 approach(f32 src, f32 trg, f32 diff) {
     return trg;
 }
 
+INLINE_XPU f32 lerp(const f32 from, const f32 to, const f32 by) {
+    return fast_mul_add(to - from, by, from);
+}
+
 template <typename T>
 INLINE_XPU void swap(T *a, T *b) {
     T t = *a;
