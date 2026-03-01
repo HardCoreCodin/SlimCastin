@@ -123,12 +123,19 @@ Tile* WALLS2[] = {
 
 
 struct DungeonCrawler : SlimApp {
+	bool AO_map_enabled = true;
+	bool normal_map_enabled = true;
+	bool roughness_map_enabled = true;
+
     // HUD:
     HUDLine FPS {"FPS : "};
     HUDLine GPU {"GPU : ", "Off", "On", &ray_cast_renderer::useGPU};
     HUDLine Mode{"Mode: ", "Beauty"};
-    HUDLine BRDF{"Shading: ", "PBR"};
-    HUD hud{{3}, &FPS};
+    HUDLine BRDF{"BRDF: ", "GGX"};
+    HUDLine Normal{"Normal : ", "Off", "On", &normal_map_enabled};
+    HUDLine AO{"AO : ", "Off", "On", &AO_map_enabled};
+    HUDLine Roughness{"Roughness : ", "Off", "On", &roughness_map_enabled};
+    HUD hud{{7}, &FPS};
 
 
 	// Viewport:
@@ -143,7 +150,7 @@ struct DungeonCrawler : SlimApp {
 
 	bool initted = false;
 
-	Color light_color{0.95f, 0.85f, 0.75f};
+	Color light_color{1.0f, 0.75f, 0.5f};
 	f32 light_intensity = 4.0f;
 	f32 time = 0.0f;
 
@@ -193,10 +200,11 @@ struct DungeonCrawler : SlimApp {
     void OnKeyChanged(u8 key, bool is_pressed) override {
         if (!is_pressed) {
         	RenderMode prior_render_mode = settings.render_mode;
+        	u8 prior_flags = settings.flags;
             if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
         	if (key == 'L') settings.flags = BRDF_Lambert | (settings.flags & USE_MAPS_MASK);
         	if (key == 'B') settings.flags = BRDF_Blinn | (settings.flags & USE_MAPS_MASK);
-        	if (key == 'X') settings.flags = BRDF_CookTorrance | (settings.flags & USE_MAPS_MASK);
+        	if (key == 'X') settings.flags = BRDF_GGX | (settings.flags & USE_MAPS_MASK);
         	if (key == 'P') settings.flags = BRDF_Phong | (settings.flags & USE_MAPS_MASK);
         	if (key == 'O') settings.flags = settings.flags & USE_AO_MAP ? (settings.flags & ~USE_AO_MAP) : (settings.flags | USE_AO_MAP);
         	if (key == 'N') settings.flags = settings.flags & USE_NORMAL_MAP ? (settings.flags & ~USE_NORMAL_MAP) : (settings.flags | USE_NORMAL_MAP);
@@ -208,29 +216,39 @@ struct DungeonCrawler : SlimApp {
             if (key == '4') settings.render_mode = RenderMode_MipLevel;
         	if (key == '5') settings.render_mode = RenderMode_UVs;
         	if (key == '6') settings.render_mode = RenderMode_Color;
-        	if (key == '7') settings.render_mode = RenderMode_Normal;
-        	if (key == '8') settings.render_mode = RenderMode_Light;
-            const char* mode = "";
+        	if (key == '7') settings.render_mode = RenderMode_Roughness;
+        	if (key == '8') settings.render_mode = RenderMode_AO;
+        	if (key == '9') settings.render_mode = RenderMode_Normal;
+        	if (key == '0') settings.render_mode = RenderMode_Light;
             switch (settings.render_mode) {
-                case RenderMode_Beauty:     mode = "Beauty"; break;
-                case RenderMode_Untextured: mode = "Untextured"; break;
-                case RenderMode_Depth:      mode = "Depth"; break;
-                case RenderMode_MipLevel:   mode = "Mip Level"; break;
-            	case RenderMode_UVs:        mode = "UVs"; break;
-            	case RenderMode_Color:      mode = "Color"; break;
-            	case RenderMode_Normal:     mode = "Normal"; break;
-            	case RenderMode_Light:      mode = "Lighting"; break;
+                case RenderMode_Beauty:     Mode.value.string = "Beauty"; break;
+                case RenderMode_Untextured: Mode.value.string = "Untextured"; break;
+                case RenderMode_Depth:      Mode.value.string = "Depth"; break;
+                case RenderMode_MipLevel:   Mode.value.string = "Mip Level"; break;
+            	case RenderMode_UVs:        Mode.value.string = "UVs"; break;
+            	case RenderMode_Color:      Mode.value.string = "Color"; break;
+            	case RenderMode_Roughness:  Mode.value.string = "Roughness"; break;
+            	case RenderMode_AO:         Mode.value.string = "AO"; break;
+            	case RenderMode_Normal:     Mode.value.string = "Normal"; break;
+            	case RenderMode_Light:      Mode.value.string = "Lighting"; break;
             }
-            Mode.value.string = mode;
-        	if (settings.render_mode != prior_render_mode)
+        	AO_map_enabled = settings.flags & USE_AO_MAP;
+        	normal_map_enabled = settings.flags & USE_NORMAL_MAP;
+        	roughness_map_enabled = settings.flags & USE_ROUGHNESS_MAP;
+        	switch ((BRDFType)(settings.flags & 3)) {
+        		case BRDF_Lambert: BRDF.value.string = "Lambert"; break;
+        		case BRDF_Blinn: BRDF.value.string = "Blinn"; break;
+        		case BRDF_Phong: BRDF.value.string = "Phong"; break;
+        		case BRDF_GGX: BRDF.value.string = "GGX"; break;
+        	}
+        	if (settings.render_mode != prior_render_mode ||
+        		settings.flags != prior_flags)
         		ray_cast_renderer::onSettingsChanged();
         }
         Move &move = navigation.move;
         Turn &turn = navigation.turn;
         if (key == 'Q') turn.left     = is_pressed;
         if (key == 'E') turn.right    = is_pressed;
-        // if (key == 'R') move.up       = is_pressed;
-        // if (key == 'F') move.down     = is_pressed;
         if (key == 'W') move.forward  = is_pressed;
         if (key == 'S') move.backward = is_pressed;
         if (key == 'A') move.left     = is_pressed;

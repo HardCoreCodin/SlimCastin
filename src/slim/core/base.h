@@ -424,6 +424,8 @@ enum RenderMode {
     RenderMode_MipLevel,
     RenderMode_UVs,
     RenderMode_Color,
+    RenderMode_Roughness,
+    RenderMode_AO,
     RenderMode_Normal,
     RenderMode_Light
 };
@@ -507,7 +509,7 @@ enum BRDFType {
     BRDF_Lambert,
     BRDF_Blinn,
     BRDF_Phong,
-    BRDF_CookTorrance
+    BRDF_GGX
 };
 
 enum ColorID {

@@ -45,11 +45,11 @@ INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 NdotH) {
     float G_V = NdotV + sqrt( (NdotV - NdotV * a2) * NdotV + a2 );
     float G_L = NdotL + sqrt( (NdotL - NdotL * a2) * NdotL + a2 );
     return D / ( G_V * G_L );
-
-    const f32 G = ggxSchlickSmith_G(a2, NdotL, NdotV);
-    return D * G
-              /
-              (4.0f * NdotL * NdotV);
+    //
+    // const f32 G = ggxSchlickSmith_G(a2, NdotL, NdotV);
+    // return D * G
+    //           /
+    //           (4.0f * NdotL * NdotV);
 }
 
 struct PixelShader {
@@ -108,6 +108,14 @@ struct PixelShader {
         else if (settings.render_mode == RenderMode_Light)
             pixel = White;
 
+        f32 roughness = 1.0f;
+        if (settings.flags & USE_ROUGHNESS_MAP &&
+            (settings.render_mode == RenderMode_Roughness ||
+             settings.render_mode == RenderMode_Beauty ||
+             settings.render_mode == RenderMode_Light)) {
+            roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
+        }
+
         N = {0.0f, 0.0f, 1.0f};
         if (settings.render_mode == RenderMode_Beauty ||
             settings.render_mode == RenderMode_Normal ||
@@ -122,12 +130,24 @@ struct PixelShader {
             else if (is & BELOW)        N = {   N.x, N.z, -N.y};
         }
 
+        float AO = 1.0f;
+        if (settings.flags & USE_AO_MAP &&
+            (settings.render_mode == RenderMode_AO ||
+             settings.render_mode == RenderMode_Beauty ||
+             settings.render_mode == RenderMode_Light)) {
+            AO = settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
+            AO *= AO;
+            AO *= AO;
+        }
+
         switch (settings.render_mode) {
             case RenderMode_Color: break;
+            case RenderMode_AO: pixel = AO; break;
             case RenderMode_UVs: pixel = Color(u, v, 0); break;
             case RenderMode_Depth: pixel = 1.0f / (Ro - P).length(); break;
             case RenderMode_Normal: pixel = N.scaleAdd(0.5, 0.5f).asColor(); break;
             case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[mip_level]); break;
+            case RenderMode_Roughness: pixel = roughness; break;
             case RenderMode_Untextured: pixel = Color(
                 is == ABOVE ?
                     settings.untextured_ceiling_color :
@@ -143,21 +163,13 @@ struct PixelShader {
                 f32 Li = settings.light_intensity * attenuation * attenuation;
 
                 Color light{settings.light_color_r, settings.light_color_g, settings.light_color_b};
-                f32 ambient_light = 0.1f;
-                if (settings.flags & USE_AO_MAP)
-                    ambient_light *= settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
-
-                f32 roughness = 1.0f;
-                if (settings.flags & USE_ROUGHNESS_MAP)
-                    roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
-
                 const f32 NdotL = clampedValue(N.dot(L));
 
                 f32 Fs = 0.0f;
                 f32 F = 0.0f;
 
                 const BRDFType brdf{(BRDFType)(settings.flags & 3)};
-                if (brdf == BRDF_CookTorrance) {
+                if (brdf == BRDF_GGX) {
                     const vec3 H = (L + V).normalized();
                     const f32 NdotH = clampedValue(N.dot(H));
                     F = schlickFresnel(clampedValue(H.dot(L)), 0.04f);
@@ -181,7 +193,7 @@ struct PixelShader {
                         Fs = powf(specular_factor, exponent);
                 }
 
-                pixel *= Li * (ambient_light + light * (NdotL * lerp(Fs, ONE_OVER_PI, F)));
+                pixel *= Li * (0.1f * AO + light * (NdotL * lerp(Fs, ONE_OVER_PI, F)));
             }
         }
 

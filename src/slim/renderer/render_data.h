@@ -81,7 +81,7 @@ struct RayCasterSettings {
         untextured_floor_color = DarkYellow;
         untextured_ceiling_color = DarkCyan;
 
-        flags = (u8)BRDF_CookTorrance | USE_MAPS_MASK;
+        flags = (u8)BRDF_GGX | USE_MAPS_MASK;
 
         light_intensity = 4.0f;
     }
