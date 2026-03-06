@@ -131,7 +131,7 @@ struct RayCaster {
 
         if (ray.hit.isValid()) {
             ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
-            wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, ray.hit);
+            wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
         }
     }
 };

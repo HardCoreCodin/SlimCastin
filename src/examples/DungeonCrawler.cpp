@@ -161,20 +161,17 @@ struct DungeonCrawler : SlimApp {
 
 		bool tile_map_changed = false;
 
-        if (!controls::is_pressed::alt) {
+        if (mouse::is_captured) {
 	        navigation.update(camera, delta_time);
         	if (navigation.moved || tile_map_changed) ray_cast_renderer::onMove(camera, tile_map);
         	if (navigation.moved || tile_map_changed ||
 	            navigation.turned ||
 	            navigation.zoomed) ray_cast_renderer::onScreenChanged(camera, tile_map);
-        }
+        } else ray_cast_renderer::onEditHover(tile_map, {mouse::pos_x, mouse::pos_y});
     	navigation.moved = navigation.turned = navigation.zoomed = false;
 
     	time += delta_time;
     	settings.light_intensity = light_intensity * 0.95f + sinf(time*17.0f) * light_intensity * 0.055f + cosf(time*23.0f) * light_intensity * 0.075f;
-    	// settings.light_position_x = ray_cast_renderer::ray_caster.position.x + camera.orientation.X.x  * (sinf(time*2.7f) * 0.19f + cosf(time*2.6f) * 0.19f) + camera.orientation.Z.x  * (cosf(time*2.5f) * 0.23f + sinf(time*2.6f) * 0.155f);
-    	// settings.light_position_y = ray_cast_renderer::ray_caster.position.y + sinf(time*2.0f) * 0.15f + cosf(time*2.6f) * 0.07f;
-    	// settings.light_position_z = 0.15f + sinf(time*2.70f) * 0.25f + cosf(time*2.50f) * 0.15f;
 
     	vec3 light_pos = vec3{ray_cast_renderer::ray_caster.position.x, 0.0f, ray_cast_renderer::ray_caster.position.y};
     	light_pos += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
@@ -198,7 +195,13 @@ struct DungeonCrawler : SlimApp {
     }
 
     void OnKeyChanged(u8 key, bool is_pressed) override {
-        if (!is_pressed) {
+    	if (is_pressed) {
+    		if (key == controls::key_map::ctrl) settings.flags |= EDITING_WALLS;
+    		if (key == controls::key_map::alt) settings.flags |= EDITING_COLUMNS;
+    	} else {
+    		if (key == controls::key_map::ctrl) settings.flags &= ~EDITING_WALLS;
+    		if (key == controls::key_map::alt) settings.flags &= ~EDITING_COLUMNS;
+    		if ((settings.flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
         	RenderMode prior_render_mode = settings.render_mode;
         	u8 prior_flags = settings.flags;
             if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
@@ -278,6 +281,16 @@ struct DungeonCrawler : SlimApp {
 
     void OnMouseButtonDown(mouse::Button &mouse_button) override {
         mouse::pos_raw_diff_x = mouse::pos_raw_diff_y = 0;
+    	if (settings.flags & (EDITING_COLUMNS | EDITING_WALLS)) {
+    		if (&mouse_button == &mouse::left_button) ray_cast_renderer::onEditLeftMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
+    		if (&mouse_button == &mouse::right_button) ray_cast_renderer::onEditRightMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
+    	}
+    }
+
+	void OnMouseButtonUp(mouse::Button &mouse_button) override {
+    	if (&mouse_button == &mouse::left_button ||
+			&mouse_button == &mouse::right_button)
+    		ray_cast_renderer::onStopEditing();
     }
 
     void OnMouseButtonDoubleClicked(mouse::Button &mouse_button) override {

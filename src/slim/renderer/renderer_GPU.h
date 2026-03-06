@@ -137,6 +137,8 @@ void initDataOnGPU(const RayCasterSettings& settings) {
 
 void uploadSettings(const RayCasterSettings* settings) {
     t_settings.render_mode = settings->render_mode;
+    t_settings.hovered_pos_x = settings->hovered_pos_x;
+    t_settings.hovered_pos_y = settings->hovered_pos_y;
     t_settings.flags = settings->flags;
     t_settings.light_intensity = settings->light_intensity;
     t_settings.light_position_x = settings->light_position_x;

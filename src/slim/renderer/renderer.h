@@ -23,11 +23,14 @@ GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
 
 
 namespace ray_cast_renderer {
-    const RayCasterSettings* settings;
+    RayCasterSettings* settings;
     RayCaster ray_caster;
     f32 prior_up_aim;
     u16 prior_screen_height;
     bool useGPU = false;
+    bool adding_column = false;
+    bool adding_tiles = false;
+    bool removing_tiles = false;
 
     void toggleUseOfGPU() {
 #ifdef __CUDACC__
@@ -68,7 +71,7 @@ namespace ray_cast_renderer {
             priorZ = Z;
         }
 
-        uploadGroundHits(ground_hits, ray_caster.screen_height);
+        if (useGPU) uploadGroundHits(ground_hits, ray_caster.screen_height);
     }
 
     void generateWallHits(const TileMap& tile_map) {
@@ -91,7 +94,7 @@ namespace ray_cast_renderer {
 
         moveTileMap(tile_map, ray_caster.position);
 
-        uploadLocalEdges(tile_map.local_edges);
+        if (useGPU) uploadLocalEdges(tile_map.local_edges);
     }
 
     void onScreenChanged(const Camera& camera, const TileMap& tile_map) {
@@ -119,6 +122,94 @@ namespace ray_cast_renderer {
             uploadSettings(settings);
     }
 
+    void onStopEditing() {
+        settings->hovered_pos_x = 0.0f;
+        settings->hovered_pos_y = 0.0f;
+        adding_column = false;
+        adding_tiles = false;
+        removing_tiles = false;
+        onSettingsChanged();
+    }
+
+    void onEditHover(TileMap& tile_map, vec2i mouse_pos, bool create_new_column = false) {
+        if (settings->flags & (EDITING_WALLS | EDITING_COLUMNS) == 0 ||
+            mouse_pos.x < 0 ||
+            mouse_pos.y < 0 ||
+            mouse_pos.x >= ray_caster.screen_width ||
+            mouse_pos.y >= ray_caster.screen_height) {
+            onSettingsChanged();
+            return;
+        }
+
+        const vec2 position = ray_caster.position + wall_hits[mouse_pos.x].ray_direction * ground_hits[mouse_pos.y].z;
+        const vec2 start = 1.0f;
+        const vec2 end = {
+            (f32)(settings->tile_map_width - 1),
+            (f32)(settings->tile_map_height - 1)
+        };
+        if (!inRange(start, position, end)) {
+            onSettingsChanged();
+            return;
+        }
+
+        if (create_new_column) {
+            Circle& column{tile_map.columns[tile_map.columns.size++]};
+            column.position = position;
+            column.radius = 0.1f;
+            if (useGPU) uploadColumns(tile_map.columns);
+            generateWallHits(tile_map);
+        } else if (adding_column) {
+            Circle& column{tile_map.columns[tile_map.columns.size - 1]};
+            column.radius = fmaxf(0.1f, (position - column.position).length());
+            if (useGPU) uploadColumns(tile_map.columns);
+            generateWallHits(tile_map);
+        } else if ((i32)settings->hovered_pos_x != (i32)position.x ||
+                   (i32)settings->hovered_pos_y != (i32)position.y) {
+
+            Tile& tile{tile_map.cells[(i32)position.y][(i32)position.x]};
+            if (adding_tiles) {
+                tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 12;
+                tile.is_full = true;
+            } else if (removing_tiles)
+                tile.is_full = false;
+
+            if (adding_tiles || removing_tiles) {
+                generateTileMapEdges(tile_map);
+                moveTileMap(tile_map, ray_caster.position);
+                if (useGPU) uploadLocalEdges(tile_map.local_edges);
+                generateWallHits(tile_map);
+            }
+        }
+
+        settings->hovered_pos_x = position.x;
+        settings->hovered_pos_y = position.y;
+        if (useGPU) uploadSettings(settings);
+    }
+
+    void onEditLeftMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
+        if (settings->flags & EDITING_WALLS) {
+            onStopEditing();
+            adding_tiles = true;
+            onEditHover(tile_map, mouse_pos);
+        } else if (settings->flags & EDITING_COLUMNS && tile_map.columns.size < MAX_COLUMN_COUNT) {
+            adding_column = true;
+            onEditHover(tile_map, mouse_pos, true);
+        }
+    }
+
+    void onEditRightMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
+        if (settings->flags & EDITING_WALLS) {
+            onStopEditing();
+            removing_tiles = true;
+            onEditHover(tile_map, mouse_pos);
+        } else if (settings->flags & EDITING_COLUMNS &&
+                   tile_map.columns.size &&
+                   wall_hits[mouse_pos.x].column_id != INVALID_COLUMN_ID) {
+            tile_map.columns[wall_hits[mouse_pos.x].column_id] = tile_map.columns[--tile_map.columns.size];
+            generateWallHits(tile_map);
+        }
+    }
+
     void renderOnCPU(u32* window_content) {
         u32 offset = 0;
         for (u16 y = 0; y < ray_caster.screen_height; y++) {
@@ -134,7 +225,7 @@ namespace ray_cast_renderer {
         }
     }
 
-    void init(const RayCasterSettings* render_settings, const Dimensions& dim, const Camera& camera, TileMap& tile_map)
+    void init(RayCasterSettings* render_settings, const Dimensions& dim, const Camera& camera, TileMap& tile_map)
     {
         settings = render_settings;
 
@@ -143,8 +234,6 @@ namespace ray_cast_renderer {
         ray_caster.last_mip = (u8)(texture.mip_count - 1);
 
         initDataOnGPU(*settings);
-
-        // uploadColumns(const Slice<Circle>& columns);
 
         prior_screen_height = 0;
         prior_up_aim = 0.0f;

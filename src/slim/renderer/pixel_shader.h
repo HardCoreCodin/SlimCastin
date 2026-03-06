@@ -65,11 +65,11 @@ struct PixelShader {
         f32 u, v;
         u8 mip_level, texture_id, is;
 
+
+        const vec2 ray_hit_position = position + wall_hit.ray_direction * ground_hit.z;
         if (y < wall_hit.top ||
             y > wall_hit.bot) {
             const bool is_ceiling = y < mid_point;
-
-            const vec2 ray_hit_position = position + wall_hit.ray_direction * ground_hit.z;
             const vec2 start = 1.0f;
             const vec2 end = {
                 (f32)(settings.tile_map_width - 1),
@@ -115,7 +115,6 @@ struct PixelShader {
              settings.render_mode == RenderMode_Light)) {
             roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
         }
-
         N = {0.0f, 0.0f, 1.0f};
         if (settings.render_mode == RenderMode_Beauty ||
             settings.render_mode == RenderMode_Normal ||
@@ -128,6 +127,12 @@ struct PixelShader {
             else if (is & FACING_RIGHT) N = { N.z,   N.y, -N.x};
             else if (is & ABOVE)        N = {   N.x,-N.z, -N.y};
             else if (is & BELOW)        N = {   N.x, N.z, -N.y};
+            else if (is == 0 && wall_hit.column_id != INVALID_COLUMN_ID) {
+                mat3 m{vec3{wall_hit.hit_normal.y, 0.0f, -wall_hit.hit_normal.x},
+                       vec3{0.0f, 1.0f, 0.0f},
+                        vec3{wall_hit.hit_normal.x, 0.0f, wall_hit.hit_normal.y}};
+                N = m * N;
+            }
         }
 
         float AO = 1.0f;
@@ -159,7 +164,7 @@ struct PixelShader {
                 const vec3 LP = vec3{settings.light_position_x, settings.light_position_y, settings.light_position_z};
                 vec3 L = LP - P;
                 const f32 attenuation = 1.0f / L.squaredLength();
-                L *= sqrt(attenuation);
+                L *= sqrtf(attenuation);
                 f32 Li = settings.light_intensity * attenuation * attenuation;
 
                 Color light{settings.light_color_r, settings.light_color_g, settings.light_color_b};
@@ -195,6 +200,21 @@ struct PixelShader {
 
                 pixel *= Li * (0.1f * AO + light * (NdotL * lerp(Fs, ONE_OVER_PI, F)));
             }
+        }
+
+        if (settings.flags & (EDITING_WALLS | EDITING_COLUMNS) &&
+            (i32)ray_hit_position.x == (i32)settings.hovered_pos_x &&
+            (i32)ray_hit_position.y == (i32)settings.hovered_pos_y) {
+            Color selection{-0.02f};
+            if (settings.flags & EDITING_WALLS)
+                selection.g = -selection.g;
+            else
+                selection.r = -selection.r;
+
+            pixel += selection;
+            pixel.r = clampedValue(pixel.r, 0.0f, 1.0f);
+            pixel.g = clampedValue(pixel.g, 0.0f, 1.0f);
+            pixel.b = clampedValue(pixel.b, 0.0f, 1.0f);
         }
 
         return pixel;

@@ -15,6 +15,8 @@
 INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
 INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
 
+#define EDITING_WALLS     (1 << 3)
+#define EDITING_COLUMNS   (1 << 4)
 #define USE_ROUGHNESS_MAP (1 << 5)
 #define USE_AO_MAP        (1 << 6)
 #define USE_NORMAL_MAP    (1 << 7)
@@ -42,6 +44,8 @@ struct RayCasterSettings {
     f32 light_color_r;
     f32 light_color_g;
     f32 light_color_b;
+    f32 hovered_pos_x;
+    f32 hovered_pos_y;
 
     FilterMode filter_mode;
     RenderMode render_mode;
@@ -84,6 +88,9 @@ struct RayCasterSettings {
         flags = (u8)BRDF_GGX | USE_MAPS_MASK;
 
         light_intensity = 4.0f;
+
+        hovered_pos_x = 0.0f;
+        hovered_pos_y = 0.0f;
     }
 };
 
@@ -106,7 +113,7 @@ INLINE_XPU bool inRange(vec2 start, vec2 value, vec2 end) {
 INLINE_XPU f32 getU(vec2 v) {
     f32 u = v.y / v.x;
     if (u > 1.0f || u < -1.0f) u = -1.0f / u;
-    return (u + 1.0f) * 0.5f;
+    return u + 1.0f;
 }
 
 struct RayHit {
@@ -134,14 +141,15 @@ struct RayHit {
 
     INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const LocalEdge *local_edges, const Circle* columns) {
         if (column_id != INVALID_COLUMN_ID) {
-            position = ray_origin + ray_direction * distance;
+            position = ray_direction * distance;
+            perp_distance = forward.dot(position);
+            position += ray_origin;
             tile_coords.x = (i32)position.x;
             tile_coords.y = (i32)position.y;
             texture_u = getU(position - columns[column_id].position);
             texture_u *= columns[column_id].radius;
-            texture_id = 0;
+            texture_id = 12;
             edge_is = 0;
-            perp_distance = 0;
             return;
         }
 
@@ -172,12 +180,13 @@ struct GroundHit {
 };
 
 struct WallHit {
-    vec2 ray_direction, hit_position;
+    vec2 ray_direction, hit_position, hit_normal;
     f32 u, v, texel_step;
     u16 top, bot;
     u8 texture_id;
     u8 mip;
     u8 is;
+    u8 column_id;
 
     INLINE_XPU void init() {
         v = -1.0f;
@@ -187,7 +196,7 @@ struct WallHit {
         return v >= 0.0f;
     }
 
-    INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const RayHit &ray_hit) {
+    INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const Circle* columns, const RayHit &ray_hit) {
         ray_direction = new_ray_direction;
         texture_id = ray_hit.texture_id;
 
@@ -212,5 +221,9 @@ struct WallHit {
 
         is = ray_hit.edge_is;
         hit_position = ray_hit.position;
+        column_id = ray_hit.column_id;
+        if (column_id != INVALID_COLUMN_ID) {
+            hit_normal = (hit_position - columns[column_id].position).normalized();
+        }
     }
 };
