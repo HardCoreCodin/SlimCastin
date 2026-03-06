@@ -46,6 +46,8 @@ struct RayCasterSettings {
     f32 light_color_b;
     f32 hovered_pos_x;
     f32 hovered_pos_y;
+    f32 body_radius;
+    f32 initial_column_radius;
 
     FilterMode filter_mode;
     RenderMode render_mode;
@@ -91,6 +93,9 @@ struct RayCasterSettings {
 
         hovered_pos_x = 0.0f;
         hovered_pos_y = 0.0f;
+
+        body_radius = 0.2;
+        initial_column_radius = 0.1f;
     }
 };
 

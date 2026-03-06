@@ -71,17 +71,19 @@ namespace ray_cast_renderer {
             priorZ = Z;
         }
 
-        if (useGPU) uploadGroundHits(ground_hits, ray_caster.screen_height);
+        uploadGroundHits(ground_hits, ray_caster.screen_height);
     }
 
     void generateWallHits(const TileMap& tile_map) {
         if (useGPU) {
             generateWallHitsOnGPU(ray_caster);
+            downloadWallHits(wall_hits, ray_caster.screen_width);
         } else {
             WallHit wall_hit;
-            RayHit closest_hit;
+            vec2 ray_direction;
             Ray ray;
-            vec2 ray_direction = ray_caster.first_ray_direction;
+            RayHit closest_hit;
+            ray_direction = ray_caster.first_ray_direction;
             for (u16 x = 0; x < ray_caster.screen_width; x++, ray_direction += ray_caster.right_step) {
                 ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, tile_map.local_edges, tile_map.columns);
                 wall_hits[x] = wall_hit;
@@ -89,12 +91,45 @@ namespace ray_cast_renderer {
         }
     }
 
-    void onMove(const Camera& camera, TileMap& tile_map) {
-        ray_caster.position = vec2(camera.position.x, camera.position.z);
+    void onMove(Camera& camera, TileMap& tile_map) {
+        vec2 position = vec2(camera.position.x, camera.position.z);
+        vec2 movement = position - ray_caster.position;
 
-        moveTileMap(tile_map, ray_caster.position);
+        if (movement.x > 0.0f) {
+            i32 next_pos = (i32)(position.x + settings->body_radius);
+            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+            if (next_tile.is_full) position.x = (f32)next_pos - settings->body_radius;
+        } else if (movement.x < 0.0f) {
+            i32 next_pos = (i32)(position.x - settings->body_radius);
+            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+            if (next_tile.is_full) position.x = (f32)(next_pos + 1) + settings->body_radius;
+        }
 
-        if (useGPU) uploadLocalEdges(tile_map.local_edges);
+        if (movement.y < 0.0f) {
+            i32 next_pos = (i32)(position.y - settings->body_radius);
+            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+            if (next_tile.is_full) position.y = (f32)(next_pos + 1) + settings->body_radius;
+        } else if (movement.y > 0.0f) {
+            i32 next_pos = (i32)(position.y + settings->body_radius);
+            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+            if (next_tile.is_full) position.y = (f32)next_pos - settings->body_radius;
+        }
+
+        for (i32 i = 0; i < tile_map.columns.size; i++) {
+            const Circle& column{tile_map.columns.data[i]};
+
+            vec2 vector_to_column = column.position - position;
+            f32 distance_to_column = vector_to_column.length();
+            f32 min_distance_allowed = settings->body_radius + column.radius;
+            if (distance_to_column < min_distance_allowed)
+                position -= (vector_to_column / distance_to_column) * (min_distance_allowed - distance_to_column);
+        }
+
+        camera.position.x = position.x;
+        camera.position.z = position.y;
+        ray_caster.position = position;
+        moveTileMap(tile_map, position);
+        uploadLocalEdges(tile_map.local_edges);
     }
 
     void onScreenChanged(const Camera& camera, const TileMap& tile_map) {
@@ -131,8 +166,8 @@ namespace ray_cast_renderer {
         onSettingsChanged();
     }
 
-    void onEditHover(TileMap& tile_map, vec2i mouse_pos, bool create_new_column = false) {
-        if (settings->flags & (EDITING_WALLS | EDITING_COLUMNS) == 0 ||
+    void onEditHover(TileMap& tile_map, vec2i mouse_pos, bool crete_new_column = false) {
+        if ((settings->flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0 ||
             mouse_pos.x < 0 ||
             mouse_pos.y < 0 ||
             mouse_pos.x >= ray_caster.screen_width ||
@@ -141,7 +176,10 @@ namespace ray_cast_renderer {
             return;
         }
 
-        const vec2 position = ray_caster.position + wall_hits[mouse_pos.x].ray_direction * ground_hits[mouse_pos.y].z;
+        const WallHit& wall_hit{wall_hits[mouse_pos.x]};
+        const GroundHit& ground_hit{ground_hits[mouse_pos.y]};
+
+        const vec2 position = ray_caster.position + wall_hit.ray_direction * ground_hit.z;
         const vec2 start = 1.0f;
         const vec2 end = {
             (f32)(settings->tile_map_width - 1),
@@ -152,38 +190,53 @@ namespace ray_cast_renderer {
             return;
         }
 
-        if (create_new_column) {
-            Circle& column{tile_map.columns[tile_map.columns.size++]};
-            column.position = position;
-            column.radius = 0.1f;
-            if (useGPU) uploadColumns(tile_map.columns);
-            generateWallHits(tile_map);
+        settings->hovered_pos_x = position.x;
+        settings->hovered_pos_y = position.y;
+        onSettingsChanged();
+
+        if (crete_new_column) {
+            f32 distance_to_body = (position - ray_caster.position).length() - settings->initial_column_radius - settings->body_radius;
+            if (distance_to_body > 0.0f) {
+                Circle& column{tile_map.columns[tile_map.columns.size++]};
+                column.position = position;
+                column.radius = settings->initial_column_radius;
+                if (useGPU) uploadColumns(tile_map.columns);
+                generateWallHits(tile_map);
+            }
         } else if (adding_column) {
             Circle& column{tile_map.columns[tile_map.columns.size - 1]};
-            column.radius = fmaxf(0.1f, (position - column.position).length());
-            if (useGPU) uploadColumns(tile_map.columns);
-            generateWallHits(tile_map);
-        } else if ((i32)settings->hovered_pos_x != (i32)position.x ||
-                   (i32)settings->hovered_pos_y != (i32)position.y) {
-
+            f32 new_radius = (position - column.position).length();
+            f32 distance_to_body = (position - ray_caster.position).length() - new_radius - settings->body_radius;
+            if (distance_to_body <= 0.0f) new_radius += distance_to_body;
+            new_radius = fmaxf(0.1f, new_radius);
+            if (new_radius != column.radius) {
+                column.radius = new_radius;
+                if (useGPU) uploadColumns(tile_map.columns);
+                generateWallHits(tile_map);
+            }
+        } else {
             Tile& tile{tile_map.cells[(i32)position.y][(i32)position.x]};
+            bool tile_changed = false;
             if (adding_tiles) {
-                tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 12;
-                tile.is_full = true;
-            } else if (removing_tiles)
+                if (!tile.is_full &&
+                    !((i32)position.x == (i32)ray_caster.position.x &&
+                      (i32)position.y == (i32)ray_caster.position.y)) {
+                    tile_changed = true;
+                    tile.is_full = true;
+                    tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 12;
+                }
+            } else if (removing_tiles && tile.is_full) {
+                tile_changed = true;
                 tile.is_full = false;
+            }
 
-            if (adding_tiles || removing_tiles) {
+            if (tile_changed) {
                 generateTileMapEdges(tile_map);
                 moveTileMap(tile_map, ray_caster.position);
                 if (useGPU) uploadLocalEdges(tile_map.local_edges);
                 generateWallHits(tile_map);
             }
         }
-
-        settings->hovered_pos_x = position.x;
-        settings->hovered_pos_y = position.y;
-        if (useGPU) uploadSettings(settings);
     }
 
     void onEditLeftMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
@@ -191,7 +244,7 @@ namespace ray_cast_renderer {
             onStopEditing();
             adding_tiles = true;
             onEditHover(tile_map, mouse_pos);
-        } else if (settings->flags & EDITING_COLUMNS && tile_map.columns.size < MAX_COLUMN_COUNT) {
+        } else if ((settings->flags & EDITING_COLUMNS) && (tile_map.columns.size < MAX_COLUMN_COUNT)) {
             adding_column = true;
             onEditHover(tile_map, mouse_pos, true);
         }
@@ -202,11 +255,13 @@ namespace ray_cast_renderer {
             onStopEditing();
             removing_tiles = true;
             onEditHover(tile_map, mouse_pos);
-        } else if (settings->flags & EDITING_COLUMNS &&
-                   tile_map.columns.size &&
-                   wall_hits[mouse_pos.x].column_id != INVALID_COLUMN_ID) {
-            tile_map.columns[wall_hits[mouse_pos.x].column_id] = tile_map.columns[--tile_map.columns.size];
-            generateWallHits(tile_map);
+        } else if ((settings->flags & EDITING_COLUMNS) && (tile_map.columns.size != 0)) {
+            const WallHit& wall_hit{wall_hits[mouse_pos.x]};
+            if (wall_hit.column_id != INVALID_COLUMN_ID) {
+                tile_map.columns[wall_hit.column_id] = tile_map.columns[--tile_map.columns.size];
+                if (useGPU) uploadColumns(tile_map.columns);
+                generateWallHits(tile_map);
+            }
         }
     }
 
@@ -225,7 +280,7 @@ namespace ray_cast_renderer {
         }
     }
 
-    void init(RayCasterSettings* render_settings, const Dimensions& dim, const Camera& camera, TileMap& tile_map)
+    void init(RayCasterSettings* render_settings, const Dimensions& dim, Camera& camera, TileMap& tile_map)
     {
         settings = render_settings;
 
