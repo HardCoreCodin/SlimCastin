@@ -149,9 +149,7 @@ struct DungeonCrawler : SlimApp {
 	RayCasterSettings settings;
 
 	bool initted = false;
-
-	Color light_color{1.0f, 0.75f, 0.5f};
-	f32 light_intensity = 4.0f;
+	bool fired = false;
 	f32 time = 0.0f;
 
     void OnUpdate(f32 delta_time) override {
@@ -171,21 +169,22 @@ struct DungeonCrawler : SlimApp {
     	navigation.moved = navigation.turned = navigation.zoomed = false;
 
     	time += delta_time;
-    	settings.light_intensity = light_intensity * 0.95f + sinf(time*17.0f) * light_intensity * 0.055f + cosf(time*23.0f) * light_intensity * 0.075f;
 
-    	vec3 light_pos = vec3{ray_cast_renderer::ray_caster.position.x, 0.0f, ray_cast_renderer::ray_caster.position.y};
-    	light_pos += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
-    	light_pos += camera.orientation.Z * 0.2f;
-    	light_pos.y += sin(time * 2.0f) * 0.3f + 0.1f;
-    	settings.light_position_x = light_pos.x;
-    	settings.light_position_y = light_pos.y;
-    	settings.light_position_z = light_pos.z;
+    	PointLight& torch{ray_cast_renderer::render_state.lights[0]};
+    	torch.position = vec3{ray_cast_renderer::ray_caster.position.x, 0.0f, ray_cast_renderer::ray_caster.position.y};
+    	torch.position += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
+    	torch.position += camera.orientation.Z * 0.2f;
+    	torch.position.y += sinf(time * 2.0f) * 0.3f + 0.1f;
 
-    	settings.light_color_r = light_color.r;
-    	settings.light_color_g = light_color.g - (sinf(time*29.0f) * 0.07f + cosf(time*29.0f) * 0.07f);
-    	settings.light_color_b = light_color.b - (sinf(time*19.0f) * 0.06f + cosf(time*19.0f) * 0.06f);
+    	torch.flicker(ray_cast_renderer::torch_light_color, ray_cast_renderer::torch_light_intensity, time);
 
-    	ray_cast_renderer::onSettingsChanged();
+    	if (ray_cast_renderer::projectile_count)
+    		ray_cast_renderer::updateProjectiles(time, delta_time, tile_map);
+
+    	if (fired) {
+    		fired = false;
+    		ray_cast_renderer::shoot(time);
+    	}
     }
 
     void OnRender() override {
@@ -195,35 +194,36 @@ struct DungeonCrawler : SlimApp {
     }
 
     void OnKeyChanged(u8 key, bool is_pressed) override {
+    	u8& flags{ray_cast_renderer::render_state.flags};
+    	RenderMode& render_mode{ray_cast_renderer::render_state.render_mode};
     	if (is_pressed) {
-    		if (key == controls::key_map::ctrl) settings.flags |= EDITING_WALLS;
-    		if (key == controls::key_map::alt) settings.flags |= EDITING_COLUMNS;
+    		if (key == controls::key_map::ctrl) flags |= EDITING_WALLS;
+    		if (key == controls::key_map::alt) flags |= EDITING_COLUMNS;
     	} else {
-    		if (key == controls::key_map::ctrl) settings.flags &= ~EDITING_WALLS;
-    		if (key == controls::key_map::alt) settings.flags &= ~EDITING_COLUMNS;
-    		if ((settings.flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
-        	RenderMode prior_render_mode = settings.render_mode;
-        	u8 prior_flags = settings.flags;
+    		if (key == controls::key_map::space && ray_cast_renderer::projectile_count < 7) fired = true;
+    		if (key == controls::key_map::ctrl) flags &= ~EDITING_WALLS;
+    		if (key == controls::key_map::alt) flags &= ~EDITING_COLUMNS;
+    		if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
             if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
-        	if (key == 'L') settings.flags = BRDF_Lambert | (settings.flags & USE_MAPS_MASK);
-        	if (key == 'B') settings.flags = BRDF_Blinn | (settings.flags & USE_MAPS_MASK);
-        	if (key == 'X') settings.flags = BRDF_GGX | (settings.flags & USE_MAPS_MASK);
-        	if (key == 'P') settings.flags = BRDF_Phong | (settings.flags & USE_MAPS_MASK);
-        	if (key == 'O') settings.flags = settings.flags & USE_AO_MAP ? (settings.flags & ~USE_AO_MAP) : (settings.flags | USE_AO_MAP);
-        	if (key == 'N') settings.flags = settings.flags & USE_NORMAL_MAP ? (settings.flags & ~USE_NORMAL_MAP) : (settings.flags | USE_NORMAL_MAP);
-        	if (key == 'R') settings.flags = settings.flags & USE_ROUGHNESS_MAP ? (settings.flags & ~USE_ROUGHNESS_MAP) : (settings.flags | USE_ROUGHNESS_MAP);
+        	if (key == 'L') flags = BRDF_Lambert | (flags & USE_MAPS_MASK);
+        	if (key == 'B') flags = BRDF_Blinn | (flags & USE_MAPS_MASK);
+        	if (key == 'X') flags = BRDF_GGX | (flags & USE_MAPS_MASK);
+        	if (key == 'P') flags = BRDF_Phong | (flags & USE_MAPS_MASK);
+        	if (key == 'O') flags = flags & USE_AO_MAP ? (flags & ~USE_AO_MAP) : (flags | USE_AO_MAP);
+        	if (key == 'N') flags = flags & USE_NORMAL_MAP ? (flags & ~USE_NORMAL_MAP) : (flags | USE_NORMAL_MAP);
+        	if (key == 'R') flags = flags & USE_ROUGHNESS_MAP ? (flags & ~USE_ROUGHNESS_MAP) : (flags | USE_ROUGHNESS_MAP);
             if (key == 'G' && USE_GPU_BY_DEFAULT) ray_cast_renderer::toggleUseOfGPU();
-            if (key == '1') settings.render_mode = RenderMode_Beauty;
-            if (key == '2') settings.render_mode = RenderMode_Untextured;
-            if (key == '3') settings.render_mode = RenderMode_Depth;
-            if (key == '4') settings.render_mode = RenderMode_MipLevel;
-        	if (key == '5') settings.render_mode = RenderMode_UVs;
-        	if (key == '6') settings.render_mode = RenderMode_Color;
-        	if (key == '7') settings.render_mode = RenderMode_Roughness;
-        	if (key == '8') settings.render_mode = RenderMode_AO;
-        	if (key == '9') settings.render_mode = RenderMode_Normal;
-        	if (key == '0') settings.render_mode = RenderMode_Light;
-            switch (settings.render_mode) {
+            if (key == '1') render_mode = RenderMode_Beauty;
+            if (key == '2') render_mode = RenderMode_Untextured;
+            if (key == '3') render_mode = RenderMode_Depth;
+            if (key == '4') render_mode = RenderMode_MipLevel;
+        	if (key == '5') render_mode = RenderMode_UVs;
+        	if (key == '6') render_mode = RenderMode_Color;
+        	if (key == '7') render_mode = RenderMode_Roughness;
+        	if (key == '8') render_mode = RenderMode_AO;
+        	if (key == '9') render_mode = RenderMode_Normal;
+        	if (key == '0') render_mode = RenderMode_Light;
+            switch (render_mode) {
                 case RenderMode_Beauty:     Mode.value.string = "Beauty"; break;
                 case RenderMode_Untextured: Mode.value.string = "Untextured"; break;
                 case RenderMode_Depth:      Mode.value.string = "Depth"; break;
@@ -235,18 +235,15 @@ struct DungeonCrawler : SlimApp {
             	case RenderMode_Normal:     Mode.value.string = "Normal"; break;
             	case RenderMode_Light:      Mode.value.string = "Lighting"; break;
             }
-        	AO_map_enabled = settings.flags & USE_AO_MAP;
-        	normal_map_enabled = settings.flags & USE_NORMAL_MAP;
-        	roughness_map_enabled = settings.flags & USE_ROUGHNESS_MAP;
-        	switch ((BRDFType)(settings.flags & 3)) {
+        	AO_map_enabled = flags & USE_AO_MAP;
+        	normal_map_enabled = flags & USE_NORMAL_MAP;
+        	roughness_map_enabled = flags & USE_ROUGHNESS_MAP;
+        	switch ((BRDFType)(flags & 3)) {
         		case BRDF_Lambert: BRDF.value.string = "Lambert"; break;
         		case BRDF_Blinn: BRDF.value.string = "Blinn"; break;
         		case BRDF_Phong: BRDF.value.string = "Phong"; break;
         		case BRDF_GGX: BRDF.value.string = "GGX"; break;
         	}
-        	if (settings.render_mode != prior_render_mode ||
-        		settings.flags != prior_flags)
-        		ray_cast_renderer::onSettingsChanged();
         }
         Move &move = navigation.move;
         Turn &turn = navigation.turn;
@@ -281,7 +278,7 @@ struct DungeonCrawler : SlimApp {
 
     void OnMouseButtonDown(mouse::Button &mouse_button) override {
         mouse::pos_raw_diff_x = mouse::pos_raw_diff_y = 0;
-    	if (settings.flags & (EDITING_COLUMNS | EDITING_WALLS)) {
+    	if (ray_cast_renderer::render_state.flags & (EDITING_COLUMNS | EDITING_WALLS)) {
     		if (&mouse_button == &mouse::left_button) ray_cast_renderer::onEditLeftMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
     		if (&mouse_button == &mouse::right_button) ray_cast_renderer::onEditRightMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
     	}

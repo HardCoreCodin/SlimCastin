@@ -23,6 +23,9 @@ INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start &
 
 #define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
 
+#define MAX_POINT_LIGHTS 8
+
+
 enum FilterMode {
     FilterMode_None,
     FilterMode_BiLinear,
@@ -34,23 +37,14 @@ struct RayCasterSettings {
     u8 textures_count;
     u8 floor_texture_id;
     u8 ceiling_texture_id;
-    u8 flags;
     u16 tile_map_width;
     u16 tile_map_height;
-    f32 light_intensity;
-    f32 light_position_x;
-    f32 light_position_y;
-    f32 light_position_z;
-    f32 light_color_r;
-    f32 light_color_g;
-    f32 light_color_b;
-    f32 hovered_pos_x;
-    f32 hovered_pos_y;
     f32 body_radius;
     f32 initial_column_radius;
+    f32 projectile_speed;
+    f32 projectile_radius;
 
-    FilterMode filter_mode;
-    RenderMode render_mode;
+    // FilterMode filter_mode;
     ColorID untextured_wall_color;
     ColorID untextured_floor_color;
     ColorID untextured_ceiling_color;
@@ -61,17 +55,15 @@ struct RayCasterSettings {
         u8 floor_texture,
         u8 ceiling_texture,
         u16 init_tile_map_width,
-        u16 init_tile_map_height,
-        FilterMode init_filter_mode = RAY_CASTER_DEFAULT_SETTINGS_FILTER_MODE,
-        RenderMode init_render_mode = RAY_CASTER_DEFAULT_SETTINGS_RENDER_MODE) {
+        u16 init_tile_map_height) {
+        // FilterMode init_filter_mode = RAY_CASTER_DEFAULT_SETTINGS_FILTER_MODE) {
         textures = textures_slice.data;
         textures_count = (u8)textures_slice.size;
         floor_texture_id = floor_texture;
         ceiling_texture_id = ceiling_texture;
         tile_map_width = init_tile_map_width;
         tile_map_height = init_tile_map_height;
-        filter_mode = init_filter_mode;
-        render_mode = init_render_mode;
+        // filter_mode = init_filter_mode;
 
         mip_level_colors[0] = BrightRed;
         mip_level_colors[1] = BrightYellow;
@@ -87,15 +79,11 @@ struct RayCasterSettings {
         untextured_floor_color = DarkYellow;
         untextured_ceiling_color = DarkCyan;
 
-        flags = (u8)BRDF_GGX | USE_MAPS_MASK;
-
-        light_intensity = 4.0f;
-
-        hovered_pos_x = 0.0f;
-        hovered_pos_y = 0.0f;
-
-        body_radius = 0.2;
+        body_radius = 0.2f;
         initial_column_radius = 0.1f;
+
+        projectile_speed = 3.0f;
+        projectile_radius = 0.2f;
     }
 };
 
@@ -120,6 +108,60 @@ INLINE_XPU f32 getU(vec2 v) {
     if (u > 1.0f || u < -1.0f) u = -1.0f / u;
     return u + 1.0f;
 }
+
+
+struct PointLight {
+    vec3 position;
+    Color color;
+    f32 intensity;
+
+    void flicker(const Color& light_color, const f32 light_intensity, const f32 time) {
+        color = light_color;
+        color.g -= sinf(time*29.0f) * 0.07f + cosf(time*29.0f) * 0.07f;
+        color.b -= sinf(time*19.0f) * 0.06f + cosf(time*19.0f) * 0.06f;
+        intensity = light_intensity * 0.95f + sinf(time*17.0f) * light_intensity * 0.095f + cosf(time*23.0f) * light_intensity * 0.125f;
+    }
+};
+
+
+struct RenderState {
+    PointLight lights[8];
+    RenderMode render_mode;
+    u8 light_count;
+    u8 flags;
+    vec2 hovered_pos;
+
+    void init() {
+        flags = (u8)BRDF_GGX | USE_MAPS_MASK;
+        render_mode = RAY_CASTER_DEFAULT_SETTINGS_RENDER_MODE;
+        hovered_pos = 0.0f;
+        light_count = 1;
+    }
+};
+
+
+struct SpinningProjectile {
+    vec3 position, forward, right;
+    f32 angle, spawned_time;
+
+    void init(const vec2 tile_map_position, const vec2 tile_map_forward, const f32 up_aim, const f32 projectile_radius, const f32 time) {
+        position.x = tile_map_position.x;
+        position.z = tile_map_position.y;
+        position.y = 0.0f;
+
+        forward.x = tile_map_forward.x;
+        forward.z = tile_map_forward.y;
+        forward.y = up_aim;
+        forward = forward.normalized();
+
+        spawned_time = time;
+    }
+
+    void updatePosition(const f32 travel) {
+        position += forward * travel;
+    }
+};
+
 
 struct RayHit {
     vec2i tile_coords;

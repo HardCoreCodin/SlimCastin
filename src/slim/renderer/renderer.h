@@ -15,7 +15,7 @@ void uploadColumns(const Slice<Circle>& columns) {}
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
 void generateWallHitsOnGPU(const RayCaster &ray_caster) {}
 void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
-void uploadSettings(const RayCasterSettings* settings)  {}
+void downloadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
 #endif
 
 WallHit wall_hits[MAX_WALL_HITS_COUNT];
@@ -32,6 +32,14 @@ namespace ray_cast_renderer {
     bool adding_tiles = false;
     bool removing_tiles = false;
 
+    RenderState render_state;
+
+    SpinningProjectile projectiles[7];
+    u8 projectile_count = 0;
+
+    Color torch_light_color{1.0f, 0.75f, 0.5f};
+    f32 torch_light_intensity = 4.0f;
+
     void toggleUseOfGPU() {
 #ifdef __CUDACC__
         if (useGPU) {
@@ -39,7 +47,6 @@ namespace ray_cast_renderer {
             useGPU = false;
         } else {
             uploadWallHits(wall_hits, ray_caster.screen_width);
-            uploadSettings(settings);
             useGPU = true;
         }
 #endif
@@ -91,6 +98,63 @@ namespace ray_cast_renderer {
         }
     }
 
+    void shoot(const f32 time) {
+        if (render_state.light_count == 8)
+            return;
+
+        SpinningProjectile& projectile{projectiles[projectile_count++]};
+        PointLight& point_light{render_state.lights[render_state.light_count++]};
+
+        projectile.init(ray_caster.position, ray_caster.forward, ray_caster.up_aim, settings->projectile_radius, time);
+
+        point_light.position = projectile.position;
+        point_light.color = torch_light_color;
+        point_light.intensity = torch_light_intensity * 0.25f;
+    }
+
+    void updateProjectiles(const f32 time, const f32 delta_time, const TileMap& tile_map) {
+        const vec2 start = 1.0f;
+        const vec2 end = {
+            (f32)(settings->tile_map_width - 1),
+            (f32)(settings->tile_map_height - 1)
+        };
+        for (i32 i = 0; i < projectile_count; i++) {
+            SpinningProjectile& projectile{projectiles[i]};
+            const f32 elapsed_time = time - projectile.spawned_time;
+            projectile.updatePosition(delta_time * settings->projectile_speed);
+
+            bool remove = projectile.position.y >= 1.0f ||
+                          projectile.position.y <= -1.0f ||
+                          !inRange(start, {projectile.position.x, projectile.position.z}, end) ||
+                          tile_map.cells[(i32)projectile.position.z][(i32)projectile.position.x].is_full;
+            if (!remove) {
+                for (u8 c = 0; c < tile_map.columns.size; c++) {
+                    const Circle& column{tile_map.columns.data[c]};
+                    const f32 distance_squared = (column.position - vec2{projectile.position.x, projectile.position.z}).squaredLength();
+                    if (distance_squared < (column.radius * column.radius)) {
+                        remove = true;
+                        break;
+                    }
+                }
+            }
+            if (remove) {
+                projectile_count--;
+                render_state.light_count--;
+                if (projectile_count == 0)
+                    return;
+
+                projectiles[i] = projectiles[projectile_count];
+                render_state.lights[i] = render_state.lights[render_state.light_count];
+                i--;
+                continue;
+            }
+
+            PointLight& point_light{render_state.lights[i+1]};
+            point_light.position = projectile.position;
+            point_light.flicker(torch_light_color, torch_light_intensity * 0.25f, elapsed_time);
+        }
+    }
+
     void onMove(Camera& camera, TileMap& tile_map) {
         vec2 position = vec2(camera.position.x, camera.position.z);
         vec2 movement = position - ray_caster.position;
@@ -115,7 +179,7 @@ namespace ray_cast_renderer {
             if (next_tile.is_full) position.y = (f32)next_pos - settings->body_radius;
         }
 
-        for (i32 i = 0; i < tile_map.columns.size; i++) {
+        for (u32 i = 0; i < tile_map.columns.size; i++) {
             const Circle& column{tile_map.columns.data[i]};
 
             vec2 vector_to_column = column.position - position;
@@ -152,27 +216,19 @@ namespace ray_cast_renderer {
         prior_screen_height = ray_caster.screen_height;
     }
 
-    void onSettingsChanged() {
-        if (useGPU)
-            uploadSettings(settings);
-    }
-
     void onStopEditing() {
-        settings->hovered_pos_x = 0.0f;
-        settings->hovered_pos_y = 0.0f;
+        render_state.hovered_pos = 0.0f;
         adding_column = false;
         adding_tiles = false;
         removing_tiles = false;
-        onSettingsChanged();
     }
 
     void onEditHover(TileMap& tile_map, vec2i mouse_pos, bool crete_new_column = false) {
-        if ((settings->flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0 ||
+        if ((render_state.flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0 ||
             mouse_pos.x < 0 ||
             mouse_pos.y < 0 ||
             mouse_pos.x >= ray_caster.screen_width ||
             mouse_pos.y >= ray_caster.screen_height) {
-            onSettingsChanged();
             return;
         }
 
@@ -186,13 +242,10 @@ namespace ray_cast_renderer {
             (f32)(settings->tile_map_height - 1)
         };
         if (!inRange(start, position, end)) {
-            onSettingsChanged();
             return;
         }
 
-        settings->hovered_pos_x = position.x;
-        settings->hovered_pos_y = position.y;
-        onSettingsChanged();
+        render_state.hovered_pos = position;
 
         if (crete_new_column) {
             f32 distance_to_body = (position - ray_caster.position).length() - settings->initial_column_radius - settings->body_radius;
@@ -202,6 +255,7 @@ namespace ray_cast_renderer {
                 column.radius = settings->initial_column_radius;
                 if (useGPU) uploadColumns(tile_map.columns);
                 generateWallHits(tile_map);
+                render_state.hovered_pos = 0.0f;
             }
         } else if (adding_column) {
             Circle& column{tile_map.columns[tile_map.columns.size - 1]};
@@ -214,6 +268,7 @@ namespace ray_cast_renderer {
                 if (useGPU) uploadColumns(tile_map.columns);
                 generateWallHits(tile_map);
             }
+            render_state.hovered_pos = 0.0f;
         } else {
             Tile& tile{tile_map.cells[(i32)position.y][(i32)position.x]};
             bool tile_changed = false;
@@ -240,22 +295,22 @@ namespace ray_cast_renderer {
     }
 
     void onEditLeftMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
-        if (settings->flags & EDITING_WALLS) {
+        if (render_state.flags & EDITING_WALLS) {
             onStopEditing();
             adding_tiles = true;
             onEditHover(tile_map, mouse_pos);
-        } else if ((settings->flags & EDITING_COLUMNS) && (tile_map.columns.size < MAX_COLUMN_COUNT)) {
+        } else if ((render_state.flags & EDITING_COLUMNS) && (tile_map.columns.size < MAX_COLUMN_COUNT)) {
             adding_column = true;
             onEditHover(tile_map, mouse_pos, true);
         }
     }
 
     void onEditRightMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
-        if (settings->flags & EDITING_WALLS) {
+        if (render_state.flags & EDITING_WALLS) {
             onStopEditing();
             removing_tiles = true;
             onEditHover(tile_map, mouse_pos);
-        } else if ((settings->flags & EDITING_COLUMNS) && (tile_map.columns.size != 0)) {
+        } else if ((render_state.flags & EDITING_COLUMNS) && (tile_map.columns.size != 0)) {
             const WallHit& wall_hit{wall_hits[mouse_pos.x]};
             if (wall_hit.column_id != INVALID_COLUMN_ID) {
                 tile_map.columns[wall_hit.column_id] = tile_map.columns[--tile_map.columns.size];
@@ -266,11 +321,12 @@ namespace ray_cast_renderer {
     }
 
     void renderOnCPU(u32* window_content) {
+        PixelShader pixel_shader{*settings, render_state};
         u32 offset = 0;
         for (u16 y = 0; y < ray_caster.screen_height; y++) {
             GroundHit ground_hit = ground_hits[y];
             for (u16 x = 0; x < ray_caster.screen_width; x++, offset++) {
-                window_content[offset] = PixelShader{*settings}.shade(
+                window_content[offset] = pixel_shader.shade(
                     ground_hit,
                     wall_hits[x],
                     ray_caster.position,
@@ -283,6 +339,7 @@ namespace ray_cast_renderer {
     void init(RayCasterSettings* render_settings, const Dimensions& dim, Camera& camera, TileMap& tile_map)
     {
         settings = render_settings;
+        render_state.init();
 
         Texture &texture{settings->textures[0]};
         ray_caster.texel_size = 1.0f / (f32)texture.width;
@@ -299,7 +356,7 @@ namespace ray_cast_renderer {
 
     void render(u32* window_content) {
         #ifdef __CUDACC__
-        if (useGPU) renderOnGPU(ray_caster, window_content);
+        if (useGPU) renderOnGPU(ray_caster, render_state, window_content);
         else        renderOnCPU(window_content);
         #else
         renderOnCPU(window_content);

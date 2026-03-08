@@ -54,17 +54,21 @@ INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 NdotH) {
 
 struct PixelShader {
     const RayCasterSettings& settings;
+    const RenderState& render_state;
     Color pixel;
+
+    vec3 P, N, L, LP, V, R;
+    f32 NdotL, NdotV, roughness;
+    BRDFType brdf;
 
     INLINE_XPU const Color& shade(const GroundHit& ground_hit, const WallHit& wall_hit, const vec2& position, u16 y, i32 mid_point) {
         pixel = Magenta;
 
         if (!wall_hit.isValid()) return pixel;
 
-        vec3 P, N, Ro;
+        vec3 Ro;
         f32 u, v;
         u8 mip_level, texture_id, is;
-
 
         const vec2 ray_hit_position = position + wall_hit.ray_direction * ground_hit.z;
         if (y < wall_hit.top ||
@@ -102,24 +106,24 @@ struct PixelShader {
             P.y = (1.0f - v) * 2.0f - 1.0f;
         }
 
-        if (settings.render_mode == RenderMode_Beauty ||
-            settings.render_mode == RenderMode_Color)
+        if (render_state.render_mode == RenderMode_Beauty ||
+            render_state.render_mode == RenderMode_Color)
             pixel = settings.textures[texture_id].mips[mip_level].sampleColor(u, v);
-        else if (settings.render_mode == RenderMode_Light)
+        else if (render_state.render_mode == RenderMode_Light)
             pixel = White;
 
-        f32 roughness = 1.0f;
-        if (settings.flags & USE_ROUGHNESS_MAP &&
-            (settings.render_mode == RenderMode_Roughness ||
-             settings.render_mode == RenderMode_Beauty ||
-             settings.render_mode == RenderMode_Light)) {
+        roughness = 1.0f;
+        if (render_state.flags & USE_ROUGHNESS_MAP &&
+            (render_state.render_mode == RenderMode_Roughness ||
+             render_state.render_mode == RenderMode_Beauty ||
+             render_state.render_mode == RenderMode_Light)) {
             roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
         }
         N = {0.0f, 0.0f, 1.0f};
-        if (settings.render_mode == RenderMode_Beauty ||
-            settings.render_mode == RenderMode_Normal ||
-            settings.render_mode == RenderMode_Light) {
-            if (settings.flags & USE_NORMAL_MAP)
+        if (render_state.render_mode == RenderMode_Beauty ||
+            render_state.render_mode == RenderMode_Normal ||
+            render_state.render_mode == RenderMode_Light) {
+            if (render_state.flags & USE_NORMAL_MAP)
                 N = vec3{settings.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
             if      (is & FACING_DOWN ) N = {   N.x,   N.y,    N.z};
             else if (is & FACING_UP   ) N = {  -N.x,   N.y,   -N.z};
@@ -136,16 +140,16 @@ struct PixelShader {
         }
 
         float AO = 1.0f;
-        if (settings.flags & USE_AO_MAP &&
-            (settings.render_mode == RenderMode_AO ||
-             settings.render_mode == RenderMode_Beauty ||
-             settings.render_mode == RenderMode_Light)) {
+        if (render_state.flags & USE_AO_MAP &&
+            (render_state.render_mode == RenderMode_AO ||
+             render_state.render_mode == RenderMode_Beauty ||
+             render_state.render_mode == RenderMode_Light)) {
             AO = settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
             AO *= AO;
             AO *= AO;
         }
 
-        switch (settings.render_mode) {
+        switch (render_state.render_mode) {
             case RenderMode_Color: break;
             case RenderMode_AO: pixel = AO; break;
             case RenderMode_UVs: pixel = Color(u, v, 0); break;
@@ -160,53 +164,69 @@ struct PixelShader {
                         settings.untextured_floor_color :
                         settings.untextured_wall_color)); break;
             default: {
-                const vec3 V{(Ro - P).normalized()};
-                const vec3 LP = vec3{settings.light_position_x, settings.light_position_y, settings.light_position_z};
-                vec3 L = LP - P;
-                const f32 attenuation = 1.0f / L.squaredLength();
-                L *= sqrtf(attenuation);
-                f32 Li = settings.light_intensity * attenuation * attenuation;
+                Color light = Black;
+                Color flare = Black;
+                brdf = (BRDFType)(render_state.flags & 3);
+                V = (Ro - P).normalized();
+                if (brdf == BRDF_GGX) NdotV = clampedValue(N.dot(V));
+                else if (brdf == BRDF_Phong) R = (-V).reflectedAround(N);
 
-                Color light{settings.light_color_r, settings.light_color_g, settings.light_color_b};
-                const f32 NdotL = clampedValue(N.dot(L));
+                for (u8 i = 0; i < render_state.light_count; i++) {
+                    const PointLight& point_light{render_state.lights[i]};
+                    L = point_light.position - P;
+                    f32 attenuation = 1.0f / L.squaredLength();
+                    L *= sqrtf(attenuation);
+                    if (i == 0) attenuation *= attenuation;
+                    const f32 Li = point_light.intensity * attenuation;
+                    NdotL = clampedValue(N.dot(L));
 
-                f32 Fs = 0.0f;
-                f32 F = 0.0f;
+                    f32 Fs = 0.0f;
+                    f32 F = 0.0f;
 
-                const BRDFType brdf{(BRDFType)(settings.flags & 3)};
-                if (brdf == BRDF_GGX) {
-                    const vec3 H = (L + V).normalized();
-                    const f32 NdotH = clampedValue(N.dot(H));
-                    F = schlickFresnel(clampedValue(H.dot(L)), 0.04f);
-                    const f32 NdotV = clampedValue(N.dot(V));
-
-                    if (NdotV > 0.0f && roughness > 0.0f) {
+                    if (brdf == BRDF_GGX) {
+                        const vec3 H = (L + V).normalized();
+                        const f32 NdotH = clampedValue(N.dot(H));
+                        F = schlickFresnel(clampedValue(H.dot(L)), 0.04f);
                         Fs = GGX(roughness, NdotL, NdotV, NdotH);
+                    } else if (brdf != BRDF_Lambert) {
+                        F = roughness;
+                        f32 exponent = 16.0f;
+                        f32 specular_factor = 0.0f;
+                        if (brdf == BRDF_Phong) {
+                            exponent = 4.0f;
+                            specular_factor = clampedValue(R.dot(L));
+                        } else { // BLINN
+                            specular_factor = clampedValue(N.dot((L + V).normalized()));
+                        }
+                        if (specular_factor > 0.0f)
+                            Fs = powf(specular_factor, exponent);
                     }
-                } else if (brdf != BRDF_Lambert) {
-                    F = roughness;
-                    f32 exponent = 16.0f;
-                    f32 specular_factor = 0.0f;
-                    if (brdf == BRDF_Phong) {
-                        exponent = 4.0f;
-                        const vec3 R = (-V).reflectedAround(N);
-                        specular_factor = clampedValue(R.dot(L));
-                    } else { // BLINN
-                        clampedValue(N.dot((L + V).normalized()));
+
+                    light += point_light.color * Li * NdotL * lerp(Fs, ONE_OVER_PI, F);
+
+                    if (i) {
+                        const vec3 RoL = Ro - point_light.position;
+                        const f32 distance = (V * V.dot(RoL) - RoL).length();
+                        if (distance < settings.projectile_radius) {
+                            f32 flare_intensity = 1.0f - ((distance) / (settings.projectile_radius));
+
+                            flare += point_light.color * (0.2f*point_light.intensity * powf(flare_intensity, 8));
+                        }
                     }
-                    if (specular_factor > 0.0f)
-                        Fs = powf(specular_factor, exponent);
                 }
 
-                pixel *= Li * (0.1f * AO + light * (NdotL * lerp(Fs, ONE_OVER_PI, F)));
+                pixel *= light + AO * 0.01f * render_state.lights[0].color;
+                pixel += flare;
             }
         }
 
-        if (settings.flags & (EDITING_WALLS | EDITING_COLUMNS) &&
-            (i32)ray_hit_position.x == (i32)settings.hovered_pos_x &&
-            (i32)ray_hit_position.y == (i32)settings.hovered_pos_y) {
+        if (render_state.flags & EDITING_WALLS &&
+            ((i32)ray_hit_position.x == (i32)render_state.hovered_pos.x &&
+             (i32)ray_hit_position.y == (i32)render_state.hovered_pos.y) ||
+            render_state.flags & EDITING_COLUMNS &&
+            (ray_hit_position - render_state.hovered_pos).squaredLength() < 0.01f) {
             Color selection{-0.02f};
-            if (settings.flags & EDITING_WALLS)
+            if (render_state.flags & EDITING_WALLS)
                 selection.g = -selection.g;
             else
                 selection.r = -selection.r;

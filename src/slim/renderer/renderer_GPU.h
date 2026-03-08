@@ -51,14 +51,14 @@ void generateWallHitsOnGPU(const RayCaster& ray_caster) {
     d_generateWallHits<<<blocks, threads>>>(ray_caster);
 }
 
-__global__ void d_render(const RayCaster ray_caster) {
+__global__ void d_render(const RayCaster ray_caster, const RenderState render_state) {
     const u32 i = blockDim.x * blockIdx.x + threadIdx.x;
     if (i >= (ray_caster.screen_width * ray_caster.screen_height)) return;
 
     const u16 x = (u16)(i % ray_caster.screen_width);
     const u16 y = (u16)(i / ray_caster.screen_width);
 
-    d_window_content[ray_caster.screen_width * y  + x] = PixelShader{d_settings}.shade(
+    d_window_content[ray_caster.screen_width * y  + x] = PixelShader{d_settings, render_state}.shade(
         d_hits.ground_hits[y],
         d_hits.wall_hits[x],
         ray_caster.position,
@@ -66,7 +66,7 @@ __global__ void d_render(const RayCaster ray_caster) {
         ray_caster.mid_point).asContent();
 }
 
-void renderOnGPU(const RayCaster& ray_caster, u32* window_content) {
+void renderOnGPU(const RayCaster& ray_caster, const RenderState& render_state, u32* window_content) {
     u32 pixel_count = ray_caster.screen_width * ray_caster.screen_height;
     u32 threads = SLIM_THREADS_PER_BLOCK;
     u32 blocks  = pixel_count / threads;
@@ -76,7 +76,7 @@ void renderOnGPU(const RayCaster& ray_caster, u32* window_content) {
     } else if (pixel_count % threads)
         blocks++;
 
-    d_render<<<blocks, threads>>>(ray_caster);
+    d_render<<<blocks, threads>>>(ray_caster, render_state);
 
     checkErrors()
     downloadN(t_window_content, window_content, pixel_count * 2)
@@ -132,21 +132,6 @@ void initDataOnGPU(const RayCasterSettings& settings) {
         }
     }
 
-    uploadConstant(&t_settings, d_settings)
-}
-
-void uploadSettings(const RayCasterSettings* settings) {
-    t_settings.render_mode = settings->render_mode;
-    t_settings.hovered_pos_x = settings->hovered_pos_x;
-    t_settings.hovered_pos_y = settings->hovered_pos_y;
-    t_settings.flags = settings->flags;
-    t_settings.light_intensity = settings->light_intensity;
-    t_settings.light_position_x = settings->light_position_x;
-    t_settings.light_position_y = settings->light_position_y;
-    t_settings.light_position_z = settings->light_position_z;
-    t_settings.light_color_r = settings->light_color_r;
-    t_settings.light_color_g = settings->light_color_g;
-    t_settings.light_color_b = settings->light_color_b;
     uploadConstant(&t_settings, d_settings)
 }
 
