@@ -11,6 +11,7 @@
 #define USE_GPU_BY_DEFAULT false
 void initDataOnGPU(const RayCasterSettings& settings) {}
 void uploadLocalEdges(const Slice<LocalEdge>& local_edges) {}
+void uploadEdges(const Slice<TileEdge>& edges) {}
 void uploadColumns(const Slice<Circle>& columns) {}
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
 void generateWallHitsOnGPU(const RayCaster &ray_caster) {}
@@ -37,7 +38,7 @@ namespace ray_cast_renderer {
     SpinningProjectile projectiles[7];
     u8 projectile_count = 0;
 
-    Color torch_light_color{1.0f, 0.75f, 0.5f};
+    Color torch_light_color{1.0f, 0.6f, 0.35f};
     f32 torch_light_intensity = 4.0f;
 
     void toggleUseOfGPU() {
@@ -288,7 +289,10 @@ namespace ray_cast_renderer {
             if (tile_changed) {
                 generateTileMapEdges(tile_map);
                 moveTileMap(tile_map, ray_caster.position);
-                if (useGPU) uploadLocalEdges(tile_map.local_edges);
+                if (useGPU) {
+                    uploadLocalEdges(tile_map.local_edges);
+                    uploadEdges(tile_map.edges);
+                }
                 generateWallHits(tile_map);
             }
         }
@@ -320,7 +324,7 @@ namespace ray_cast_renderer {
         }
     }
 
-    void renderOnCPU(u32* window_content) {
+    void renderOnCPU(u32* window_content, const TileMap& tile_map) {
         PixelShader pixel_shader{*settings, render_state};
         u32 offset = 0;
         for (u16 y = 0; y < ray_caster.screen_height; y++) {
@@ -329,6 +333,8 @@ namespace ray_cast_renderer {
                 window_content[offset] = pixel_shader.shade(
                     ground_hit,
                     wall_hits[x],
+                    tile_map.edges,
+                    tile_map.columns,
                     ray_caster.position,
                     y,
                     ray_caster.mid_point).asContent();
@@ -346,6 +352,7 @@ namespace ray_cast_renderer {
         ray_caster.last_mip = (u8)(texture.mip_count - 1);
 
         initDataOnGPU(*settings);
+        uploadEdges(tile_map.edges);
 
         prior_screen_height = 0;
         prior_up_aim = 0.0f;
@@ -354,12 +361,12 @@ namespace ray_cast_renderer {
         onResize(dim.width, dim.height, camera, tile_map);
     }
 
-    void render(u32* window_content) {
+    void render(u32* window_content, const TileMap& tile_map) {
         #ifdef __CUDACC__
         if (useGPU) renderOnGPU(ray_caster, render_state, window_content);
-        else        renderOnCPU(window_content);
+        else        renderOnCPU(window_content, tile_map);
         #else
-        renderOnCPU(window_content);
+        renderOnCPU(window_content, tile_map);
         #endif
     }
 };

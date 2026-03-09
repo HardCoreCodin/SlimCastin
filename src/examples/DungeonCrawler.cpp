@@ -123,6 +123,7 @@ Tile* WALLS2[] = {
 
 
 struct DungeonCrawler : SlimApp {
+	bool shadows_enabled = true;
 	bool AO_map_enabled = true;
 	bool normal_map_enabled = true;
 	bool roughness_map_enabled = true;
@@ -132,6 +133,7 @@ struct DungeonCrawler : SlimApp {
     HUDLine GPU {"GPU : ", "Off", "On", &ray_cast_renderer::useGPU};
     HUDLine Mode{"Mode: ", "Beauty"};
     HUDLine BRDF{"BRDF: ", "GGX"};
+    HUDLine Shadows{"Shadows: ", "Off", "On", &shadows_enabled};
     HUDLine Normal{"Normal : ", "Off", "On", &normal_map_enabled};
     HUDLine AO{"AO : ", "Off", "On", &AO_map_enabled};
     HUDLine Roughness{"Roughness : ", "Off", "On", &roughness_map_enabled};
@@ -188,7 +190,7 @@ struct DungeonCrawler : SlimApp {
     }
 
     void OnRender() override {
-        ray_cast_renderer::render(window::content);
+        ray_cast_renderer::render(window::content, tile_map);
         if (hud.enabled)
             drawHUD(hud, window::content, dimensions);
     }
@@ -205,13 +207,14 @@ struct DungeonCrawler : SlimApp {
     		if (key == controls::key_map::alt) flags &= ~EDITING_COLUMNS;
     		if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
             if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
-        	if (key == 'L') flags = BRDF_Lambert | (flags & USE_MAPS_MASK);
-        	if (key == 'B') flags = BRDF_Blinn | (flags & USE_MAPS_MASK);
-        	if (key == 'X') flags = BRDF_GGX | (flags & USE_MAPS_MASK);
-        	if (key == 'P') flags = BRDF_Phong | (flags & USE_MAPS_MASK);
+        	if (key == 'L') flags = BRDF_Lambert | (flags & ~BRDF_MASK);
+        	if (key == 'B') flags = BRDF_Blinn | (flags & ~BRDF_MASK);
+        	if (key == 'X') flags = BRDF_GGX | (flags & ~BRDF_MASK);
+        	if (key == 'P') flags = BRDF_Phong | (flags & ~BRDF_MASK);
         	if (key == 'O') flags = flags & USE_AO_MAP ? (flags & ~USE_AO_MAP) : (flags | USE_AO_MAP);
         	if (key == 'N') flags = flags & USE_NORMAL_MAP ? (flags & ~USE_NORMAL_MAP) : (flags | USE_NORMAL_MAP);
         	if (key == 'R') flags = flags & USE_ROUGHNESS_MAP ? (flags & ~USE_ROUGHNESS_MAP) : (flags | USE_ROUGHNESS_MAP);
+        	if (key == 'H') flags = flags & CAST_SHADOWS ? (flags & ~CAST_SHADOWS) : (flags | CAST_SHADOWS);
             if (key == 'G' && USE_GPU_BY_DEFAULT) ray_cast_renderer::toggleUseOfGPU();
             if (key == '1') render_mode = RenderMode_Beauty;
             if (key == '2') render_mode = RenderMode_Untextured;
@@ -235,6 +238,7 @@ struct DungeonCrawler : SlimApp {
             	case RenderMode_Normal:     Mode.value.string = "Normal"; break;
             	case RenderMode_Light:      Mode.value.string = "Lighting"; break;
             }
+    		shadows_enabled = flags & CAST_SHADOWS;
         	AO_map_enabled = flags & USE_AO_MAP;
         	normal_map_enabled = flags & USE_NORMAL_MAP;
         	roughness_map_enabled = flags & USE_ROUGHNESS_MAP;
@@ -247,8 +251,8 @@ struct DungeonCrawler : SlimApp {
         }
         Move &move = navigation.move;
         Turn &turn = navigation.turn;
-        if (key == 'Q') turn.left     = is_pressed;
-        if (key == 'E') turn.right    = is_pressed;
+        if (key == 'E') turn.left     = is_pressed;
+        if (key == 'Q') turn.right    = is_pressed;
         if (key == 'W') move.forward  = is_pressed;
         if (key == 'S') move.backward = is_pressed;
         if (key == 'A') move.left     = is_pressed;

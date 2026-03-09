@@ -15,6 +15,7 @@
 INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
 INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
 
+#define CAST_SHADOWS      (1 << 2)
 #define EDITING_WALLS     (1 << 3)
 #define EDITING_COLUMNS   (1 << 4)
 #define USE_ROUGHNESS_MAP (1 << 5)
@@ -22,6 +23,7 @@ INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start &
 #define USE_NORMAL_MAP    (1 << 7)
 
 #define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
+#define BRDF_MASK 3
 
 #define MAX_POINT_LIGHTS 8
 
@@ -133,6 +135,9 @@ struct RenderState {
 
     void init() {
         flags = (u8)BRDF_GGX | USE_MAPS_MASK;
+#ifdef __CUDACC__
+        flags |= CAST_SHADOWS;
+#endif
         render_mode = RAY_CASTER_DEFAULT_SETTINGS_RENDER_MODE;
         hovered_pos = 0.0f;
         light_count = 1;

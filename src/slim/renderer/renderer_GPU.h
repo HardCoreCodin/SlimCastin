@@ -16,9 +16,11 @@ __constant__ u32* d_window_content;
 __constant__ DeviceHits d_hits;
 __constant__ Slice<Circle> d_columns;
 __constant__ Slice<LocalEdge> d_local_edges;
+__constant__ Slice<TileEdge> d_edges;
 
 RayCasterSettings t_settings;
 Slice<Circle> t_columns;
+Slice<TileEdge> t_edges;
 Slice<LocalEdge> t_local_edges;
 DeviceHits t_hits;
 TextureMip *t_texture_mips;
@@ -61,6 +63,8 @@ __global__ void d_render(const RayCaster ray_caster, const RenderState render_st
     d_window_content[ray_caster.screen_width * y  + x] = PixelShader{d_settings, render_state}.shade(
         d_hits.ground_hits[y],
         d_hits.wall_hits[x],
+        d_edges,
+        d_columns,
         ray_caster.position,
         y,
         ray_caster.mid_point).asContent();
@@ -103,10 +107,12 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     gpuErrchk(cudaMalloc(&t_hits.wall_hits,   sizeof(WallHit) * MAX_WALL_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_hits.ground_hits,    sizeof(GroundHit)  * MAX_GROUND_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_local_edges.data,    sizeof(LocalEdge)  * MAX_TILE_MAP_EDGES))
+    gpuErrchk(cudaMalloc(&t_edges.data,    sizeof(TileEdge)  * MAX_TILE_MAP_EDGES))
     gpuErrchk(cudaMalloc(&t_columns.data,    sizeof(Circle)  * MAX_COLUMN_COUNT))
 
     uploadConstant(&t_hits, d_hits);
     uploadConstant(&t_local_edges, d_local_edges);
+    uploadConstant(&t_edges, d_edges);
     uploadConstant(&t_columns, d_columns);
 
     TexelQuad *d_quads = t_texel_quads;
@@ -139,6 +145,12 @@ void uploadLocalEdges(const Slice<LocalEdge>& local_edges) {
     t_local_edges.size = local_edges.size;
     uploadConstant(&t_local_edges, d_local_edges);
     uploadN(local_edges.data, t_local_edges.data, local_edges.size)
+}
+
+void uploadEdges(const Slice<TileEdge>& edges) {
+    t_edges.size = edges.size;
+    uploadConstant(&t_edges, d_edges);
+    uploadN(edges.data, t_edges.data, t_edges.size)
 }
 
 void uploadColumns(const Slice<Circle>& columns) {

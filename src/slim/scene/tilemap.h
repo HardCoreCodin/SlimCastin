@@ -31,17 +31,6 @@
 
 
 
-struct TileEdge {
-	vec2i from{};
-	vec2i to{};
-	i32 length = 0;
-	// i32 portal_ray_rotation = 0;
-	// TileEdge* portal_to;
-	// bool portal_edge_dir_flip;
-	u8 texture_id = 0;
-	u8 is = 0;
-};
-
 
 struct TileSide {
 	// TileSide* portal_to;
@@ -244,25 +233,9 @@ void moveTileMap(TileMap& tm, const vec2& origin) {
 	LocalEdge local_edge;
 	TileEdge* edge = nullptr;
 	tm.local_edges.size = 0;
-	iterSlice(tm.edges, edge, i) {
-		local_edge.texture_id = edge->texture_id;
-		local_edge.from = vec2((f32)edge->from.x - origin.x, (f32)edge->from.y - origin.y);
-		local_edge.to = vec2((f32)edge->to.x - origin.x, (f32)edge->to.y - origin.y);
-		local_edge.is = edge->is;
-
-		if (local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
-			if (local_edge.from.x > 0) local_edge.is |= ON_THE_RIGHT;
-			if (local_edge.to.x   < 0) local_edge.is |= ON_THE_LEFT;
-		} else {
-			if (local_edge.to.y   < 0) local_edge.is |= ABOVE;
-			if (local_edge.from.y > 0) local_edge.is |= BELOW;
-		}
-		if (local_edge.is & FACING_LEFT  && local_edge.is & ON_THE_RIGHT ||
-			local_edge.is & FACING_RIGHT && local_edge.is & ON_THE_LEFT ||
-			local_edge.is & FACING_DOWN  && local_edge.is & ABOVE ||
-			local_edge.is & FACING_UP    && local_edge.is & BELOW)
+	iterSlice(tm.edges, edge, i)
+		if (local_edge.fromTileEdge(*edge, origin))
 			tm.local_edges.data[tm.local_edges.size++] = local_edge;
-	}
 }
 
 

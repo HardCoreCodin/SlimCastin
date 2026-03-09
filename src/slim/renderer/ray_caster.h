@@ -39,6 +39,7 @@ struct Ray {
             f32 dt = circle.radius * circle.radius - (direction * t - C).squaredLength();
             if (dt > 0.0f && t*t > dt) { // Inside the sphere
                 t -= sqrt(dt);
+                t *= t;
                 if (t < hit.distance) {
                     hit.distance = t;
                     return true;
@@ -123,13 +124,13 @@ struct RayCaster {
         }
 
         ray.hit = closest_hit;
-        ray.hit.distance  = sqrt(closest_hit.distance);
 
         for (u8 i = 0; i < (u8)columns.size; i++)
             if (ray.intersectsWithCircle(columns[i]))
                 ray.hit.column_id = i;
 
         if (ray.hit.isValid()) {
+            ray.hit.distance  = sqrt(ray.hit.distance);
             ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
             wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
         }
