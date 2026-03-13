@@ -15,13 +15,13 @@ __constant__ RayCasterSettings d_settings;
 __constant__ u32* d_window_content;
 __constant__ DeviceHits d_hits;
 __constant__ Slice<Circle> d_columns;
-__constant__ Slice<LocalEdge> d_local_edges;
+__constant__ Slice<u16> d_visible_edge_ids;
 __constant__ Slice<TileEdge> d_edges;
 
 RayCasterSettings t_settings;
 Slice<Circle> t_columns;
 Slice<TileEdge> t_edges;
-Slice<LocalEdge> t_local_edges;
+Slice<u16> t_visible_edge_ids;
 DeviceHits t_hits;
 TextureMip *t_texture_mips;
 TexelQuad *t_texel_quads;
@@ -36,7 +36,7 @@ __global__ void d_generateWallHits(RayCaster ray_caster) {
     RayHit closest_hit;
     Ray ray;
     vec2 ray_direction = ray_caster.first_ray_direction + (f32)x * ray_caster.right_step;
-    ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, d_local_edges, d_columns);
+    ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, d_visible_edge_ids, d_edges, d_columns);
     d_hits.wall_hits[x] = wall_hit;
 }
 
@@ -106,12 +106,12 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     gpuErrchk(cudaMalloc(&t_texel_quads,    sizeof(TexelQuad)  * total_texel_quads_count))
     gpuErrchk(cudaMalloc(&t_hits.wall_hits,   sizeof(WallHit) * MAX_WALL_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_hits.ground_hits,    sizeof(GroundHit)  * MAX_GROUND_HITS_COUNT))
-    gpuErrchk(cudaMalloc(&t_local_edges.data,    sizeof(LocalEdge)  * MAX_TILE_MAP_EDGES))
+    gpuErrchk(cudaMalloc(&t_visible_edge_ids.data,    sizeof(u16)  * MAX_TILE_MAP_EDGES))
     gpuErrchk(cudaMalloc(&t_edges.data,    sizeof(TileEdge)  * MAX_TILE_MAP_EDGES))
     gpuErrchk(cudaMalloc(&t_columns.data,    sizeof(Circle)  * MAX_COLUMN_COUNT))
 
     uploadConstant(&t_hits, d_hits);
-    uploadConstant(&t_local_edges, d_local_edges);
+    uploadConstant(&t_visible_edge_ids, d_visible_edge_ids);
     uploadConstant(&t_edges, d_edges);
     uploadConstant(&t_columns, d_columns);
 
@@ -141,10 +141,10 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     uploadConstant(&t_settings, d_settings)
 }
 
-void uploadLocalEdges(const Slice<LocalEdge>& local_edges) {
-    t_local_edges.size = local_edges.size;
-    uploadConstant(&t_local_edges, d_local_edges);
-    uploadN(local_edges.data, t_local_edges.data, local_edges.size)
+void uploadVisibleEdgeIds(const Slice<u16>& visible_edge_ids) {
+    t_visible_edge_ids.size = visible_edge_ids.size;
+    uploadConstant(&t_visible_edge_ids, d_visible_edge_ids);
+    uploadN(visible_edge_ids.data, t_visible_edge_ids.data, visible_edge_ids.size)
 }
 
 void uploadEdges(const Slice<TileEdge>& edges) {

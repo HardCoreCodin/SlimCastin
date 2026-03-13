@@ -75,7 +75,7 @@ struct PixelShader {
 
         vec3 Ro;
         f32 u, v;
-        u8 mip_level, texture_id, is;
+        u8 mip_level, texture_id, edge_is;
 
         const vec2 ray_hit_position = position + wall_hit.ray_direction * ground_hit.z;
         if (y < wall_hit.top ||
@@ -91,7 +91,7 @@ struct PixelShader {
             mip_level = ground_hit.mip;
             v = ray_hit_position.y - (f32)(i32)ray_hit_position.y;
             u = ray_hit_position.x - (f32)(i32)ray_hit_position.x;
-            is = is_ceiling ? ABOVE : BELOW;
+            edge_is = is_ceiling ? ABOVE : BELOW;
             texture_id = is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id;
             Ro.x = position.x;
             Ro.z = position.y;
@@ -103,7 +103,7 @@ struct PixelShader {
             mip_level = wall_hit.mip;
             v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
             u = wall_hit.u;
-            is = wall_hit.is;
+            edge_is = wall_hit.edge_is;
             texture_id = wall_hit.texture_id;
             Ro.x = position.x;
             Ro.z = position.y;
@@ -132,13 +132,13 @@ struct PixelShader {
             render_state.render_mode == RenderMode_Light) {
             if (render_state.flags & USE_NORMAL_MAP)
                 N = vec3{settings.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
-            if      (is & FACING_DOWN ) N = {   N.x,   N.y,    N.z};
-            else if (is & FACING_UP   ) N = {  -N.x,   N.y,   -N.z};
-            else if (is & FACING_LEFT ) N = {-N.z,   N.y,  N.x};
-            else if (is & FACING_RIGHT) N = { N.z,   N.y, -N.x};
-            else if (is & ABOVE)        N = {   N.x,-N.z, -N.y};
-            else if (is & BELOW)        N = {   N.x, N.z, -N.y};
-            else if (is == 0 && wall_hit.column_id != INVALID_COLUMN_ID) {
+            if      (edge_is & FACING_DOWN ) N = {   N.x,   N.y,    N.z};
+            else if (edge_is & FACING_UP   ) N = {  -N.x,   N.y,   -N.z};
+            else if (edge_is & FACING_LEFT ) N = {-N.z,   N.y,  N.x};
+            else if (edge_is & FACING_RIGHT) N = { N.z,   N.y, -N.x};
+            else if (edge_is & ABOVE)        N = {   N.x,-N.z, -N.y};
+            else if (edge_is & BELOW)        N = {   N.x, N.z, -N.y};
+            else if (edge_is == 0 && wall_hit.column_id != INVALID_COLUMN_ID) {
                 mat3 m{vec3{wall_hit.hit_normal.y, 0.0f, -wall_hit.hit_normal.x},
                        vec3{0.0f, 1.0f, 0.0f},
                         vec3{wall_hit.hit_normal.x, 0.0f, wall_hit.hit_normal.y}};
@@ -165,14 +165,14 @@ struct PixelShader {
             case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[mip_level]); break;
             case RenderMode_Roughness: pixel = roughness; break;
             case RenderMode_Untextured: pixel = Color(
-                is == ABOVE ?
+                edge_is == ABOVE ?
                     settings.untextured_ceiling_color :
-                    (is == BELOW ?
+                    (edge_is == BELOW ?
                         settings.untextured_floor_color :
                         settings.untextured_wall_color)); break;
             default: {
                 Ray ray;
-                LocalEdge local_edge;
+                TileEdge edge;
                 Color light = Black;
                 Color flare = Black;
                 brdf = (BRDFType)(render_state.flags & BRDF_MASK);
@@ -190,8 +190,9 @@ struct PixelShader {
                         ray.update(vec2{P.x, P.z}, L2d / sqrtf(distance_2d_squared));
                         f32 closest_hit_distance = 1000000.0f;
                         for (u16 e = 0; e < (u16)edges.size; e++) {
-                            if (local_edge.fromTileEdge(edges[e], ray.origin) && ray.intersectsWithEdge(local_edge)) {
-                                ray.hit.distance = ray.hit.position.squaredLength();
+                            edge = edges.data[e];
+                            if (edge.isVisible(ray.origin) && ray.intersectsWithEdge(edge)) {
+                                ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
                                 if (ray.hit.distance < closest_hit_distance)
                                     closest_hit_distance = ray.hit.distance;
                             }

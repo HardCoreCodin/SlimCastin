@@ -176,22 +176,22 @@ struct RayHit {
     f32 perp_distance;
     f32 texture_u;
 
-    u16 local_edge_id;
+    u16 edge_id;
     u8 column_id;
     u8 texture_id;
     u8 edge_is;
 
     INLINE_XPU void init() {
         column_id = INVALID_COLUMN_ID;
-        local_edge_id = INVALID_EDGE_ID;
+        edge_id = INVALID_EDGE_ID;
     }
 
     INLINE_XPU bool isValid() {
         return column_id != INVALID_COLUMN_ID ||
-               local_edge_id != INVALID_EDGE_ID;
+               edge_id != INVALID_EDGE_ID;
     }
 
-    INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const LocalEdge *local_edges, const Circle* columns) {
+    INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const TileEdge *edges, const Circle* columns) {
         if (column_id != INVALID_COLUMN_ID) {
             position = ray_direction * distance;
             perp_distance = forward.dot(position);
@@ -205,23 +205,20 @@ struct RayHit {
             return;
         }
 
-        edge_is = local_edges[local_edge_id].is;
-        texture_id = local_edges[local_edge_id].texture_id;
+        edge_is = edges[edge_id].is;
+        texture_id = edges[edge_id].texture_id;
 
-        vec2 local_hit_position = position;
-        position += ray_origin;
+        perp_distance = forward.dot(position - ray_origin);
 
         tile_coords.x = edge_is & FACING_RIGHT ? (i32)position.x - 1 : (i32)position.x;
         tile_coords.y = edge_is & FACING_DOWN  ? (i32)position.y - 1 : (i32)position.y;
 
         texture_u = edge_is & (FACING_LEFT | FACING_RIGHT) ?
-            local_hit_position.y - local_edges[local_edge_id].from.y :
-            local_hit_position.x - local_edges[local_edge_id].from.x;
+            position.y - (f32)edges[edge_id].from.y :
+            position.x - (f32)edges[edge_id].from.x;
         texture_u -= (f32)(i32)texture_u;
         if (edge_is & (FACING_RIGHT | FACING_UP))
             texture_u = 1.0f - texture_u;
-
-        perp_distance = forward.dot(local_hit_position);
     }
 };
 
@@ -237,7 +234,7 @@ struct WallHit {
     u16 top, bot;
     u8 texture_id;
     u8 mip;
-    u8 is;
+    u8 edge_is;
     u8 column_id;
 
     INLINE_XPU void init() {
@@ -271,7 +268,7 @@ struct WallHit {
         if (bot >= screen_height)
             bot = screen_height - 1;
 
-        is = ray_hit.edge_is;
+        edge_is = ray_hit.edge_is;
         hit_position = ray_hit.position;
         column_id = ray_hit.column_id;
         if (column_id != INVALID_COLUMN_ID) {

@@ -59,11 +59,7 @@ typedef Slice<Tile> TileRow;
 struct TileMap : Grid<Tile> {
 	Slice<Circle> columns;
 	Slice<TileEdge> edges;
-	Slice<LocalEdge> local_edges;
-
-	// i32 vertex_count;
-	// Slice<vec2i> vertices;
-	// Slice<vec2> vertices_in_local_space;
+	Slice<u16> visible_edge_ids;
 
 	u8 columns_texture_id;
 
@@ -75,7 +71,7 @@ struct TileMap : Grid<Tile> {
 	TileRow all_rows[MAX_TILE_MAP_HEIGHT];
 	Tile all_tiles[MAX_TILE_MAP_SIZE];
 	TileEdge all_edges[MAX_TILE_MAP_EDGES];
-	LocalEdge all_local_edges[MAX_TILE_MAP_EDGES];
+	u16 all_visible_edge_ids[MAX_TILE_MAP_EDGES];
 	Circle all_columns[MAX_COLUMN_COUNT];
 };
 
@@ -116,9 +112,9 @@ void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_T
 	for (int i = 0; i < MAX_TILE_MAP_SIZE; i++) initTile(tm.all_tiles + i);
 	setSliceToStaticArray(tm.columns, tm.all_columns);
 	setSliceToStaticArray(tm.edges, tm.all_edges);
-	setSliceToStaticArray(tm.local_edges, tm.all_local_edges);
+	setSliceToStaticArray(tm.visible_edge_ids, tm.all_visible_edge_ids);
 
-	tm.columns.size = tm.edges.size = tm.local_edges.size = 0;
+	tm.columns.size = tm.edges.size = tm.visible_edge_ids.size = 0;
 	// setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
 	initGrid<Tile>(tm, Width, Height, {&tm.all_tiles[0], ARRAY_SIZE(tm.all_tiles)});
 }
@@ -230,12 +226,11 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 
 
 void moveTileMap(TileMap& tm, const vec2& origin) {
-	LocalEdge local_edge;
 	TileEdge* edge = nullptr;
-	tm.local_edges.size = 0;
+	tm.visible_edge_ids.size = 0;
 	iterSlice(tm.edges, edge, i)
-		if (local_edge.fromTileEdge(*edge, origin))
-			tm.local_edges.data[tm.local_edges.size++] = local_edge;
+		if (edge->isVisible(origin))
+			tm.visible_edge_ids.data[tm.visible_edge_ids.size++] = (u16)i;
 }
 
 
@@ -284,7 +279,7 @@ void generateTileMapEdges(TileMap& tm) {
 					    // above.tile->left.portal_to == current_tile->left.portal_to && current_tile->left.portal_from == nullptr) { // Tile above has a left edge, extend it:
 		        		current_tile->left.edge_id = above.tile->left.edge_id;
 		        		TileEdge& left_edge = tm.edges[current_tile->left.edge_id];
-		        		left_edge.length++;
+		        		// left_edge.length++;
 		        		left_edge.to.y++;
 		        	} else { // No left edge above - create new one:
 		        		current_tile->left.edge_id = (u16)tm.edges.size;
@@ -301,7 +296,7 @@ void generateTileMapEdges(TileMap& tm) {
 					    // above.tile->right.portal_to == current_tile->right.portal_to && current_tile->right.portal_from == nullptr) { // Tile above has a right edge, extend it:
 		        		current_tile->right.edge_id = above.tile->right.edge_id;
 		        		TileEdge& right_edge = tm.edges.data[above.tile->right.edge_id];
-		        		right_edge.length++;
+		        		// right_edge.length++;
 		        		right_edge.to.y++;
 		        	} else { // No right edge above - create new one:
 		        		current_tile->right.edge_id = (u16)tm.edges.size;
@@ -320,7 +315,7 @@ void generateTileMapEdges(TileMap& tm) {
 						// left.tile->top.portal_to == current_tile->top.portal_to && current_tile->top.portal_from == nullptr) { // Tile on the left has a top edge, extend it:
 		        		current_tile->top.edge_id = left.tile->top.edge_id;
 		        		TileEdge& top_edge = tm.edges[left.tile->top.edge_id];
-		        		top_edge.length++;
+		        		// top_edge.length++;
 		        		top_edge.to.x++;
 		        	} else { // No top edge on the left - create new one:
 		        		current_tile->top.edge_id = (u16)tm.edges.size;
@@ -337,7 +332,7 @@ void generateTileMapEdges(TileMap& tm) {
 						// left.tile->bottom.portal_to == current_tile->bottom.portal_to && current_tile->bottom.portal_from == nullptr) {// Tile on the left has a bottom edge, extend it:
 		        		current_tile->bottom.edge_id = left.tile->bottom.edge_id;
 		        		TileEdge& bottom_edge = tm.edges[left.tile->bottom.edge_id];
-		        		bottom_edge.length++;
+		        		// bottom_edge.length++;
 		        		bottom_edge.to.x++;
 		        	} else { // No bottom edge on the left - create new one:
 		        		current_tile->bottom.edge_id = (u16)tm.edges.size;

@@ -50,29 +50,31 @@ struct Ray {
         return false;
     }
 
-    INLINE_XPU bool intersectsWithEdge(const LocalEdge& local_edge) {
-        if (local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
+    INLINE_XPU bool intersectsWithEdge(const TileEdge& edge) {
+        if (edge.is & (FACING_LEFT | FACING_RIGHT)) {
             if (is_vertical ||
-                (is_facing_right && (local_edge.is & ON_THE_LEFT)) ||
-                (is_facing_left && (local_edge.is & ON_THE_RIGHT)))
+                (is_facing_right && (edge.is & ON_THE_LEFT)) ||
+                (is_facing_left && (edge.is & ON_THE_RIGHT)))
                 return false;
 
-            hit.position = local_edge.to.x;
+            hit.position = (f32)edge.to.x - origin.x;
             hit.position.y *= rise_over_run;
+            hit.position += origin;
 
-            return inRange(local_edge.from.y, hit.position.y, local_edge.to.y);
+            return inRange((f32)edge.from.y, hit.position.y, (f32)edge.to.y);
         }
 
         // Edge is horizontal:
         if (is_horizontal ||
-            (is_facing_up && (local_edge.is & BELOW)) ||
-            (is_facing_down && (local_edge.is & ABOVE)))
+            (is_facing_up && (edge.is & BELOW)) ||
+            (is_facing_down && (edge.is & ABOVE)))
             return false;
 
-        hit.position = local_edge.to.y;
+        hit.position = (f32)edge.to.y - origin.y;
         hit.position.x *= run_over_rise;
+        hit.position += origin;
 
-        return inRange(local_edge.from.x, hit.position.x, local_edge.to.x);
+        return inRange((f32)edge.from.x, hit.position.x, (f32)edge.to.x);
     }
 };
 
@@ -104,21 +106,19 @@ struct RayCaster {
         mid_point = (i32)((1.0f + up_aim) * (f32)(screen_height >> 1));
     }
 
-    INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<LocalEdge> &local_edges, const Slice<Circle> &columns) {
+    INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<u16> &visible_edge_ids, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
         ray.update(position, ray_direction);
         ray.hit.init();
         closest_hit.init();
         closest_hit.distance = 10000000;
         wall_hit.init();
 
-        LocalEdge local_edge;
-        for (u16 i = 0; i < (u16)local_edges.size; i++) {
-            local_edge = local_edges[i];
-            if (ray.intersectsWithEdge(local_edge)) {
-                ray.hit.distance = ray.hit.position.squaredLength();
+        for (u16 i = 0; i < (u16)visible_edge_ids.size; i++) {
+            if (ray.intersectsWithEdge(edges.data[visible_edge_ids[i]])) {
+                ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
                 if (ray.hit.distance < closest_hit.distance) {
                     closest_hit = ray.hit;
-                    closest_hit.local_edge_id = i;
+                    closest_hit.edge_id = visible_edge_ids[i];
                 }
             }
         }
@@ -131,7 +131,7 @@ struct RayCaster {
 
         if (ray.hit.isValid()) {
             ray.hit.distance  = sqrt(ray.hit.distance);
-            ray.hit.finalize(ray.origin, ray.direction, forward, local_edges.data, columns.data);
+            ray.hit.finalize(ray.origin, ray.direction, forward, edges.data, columns.data);
             wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
         }
     }

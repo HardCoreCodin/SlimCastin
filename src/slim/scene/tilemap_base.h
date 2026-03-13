@@ -22,6 +22,19 @@
 #define ON_THE_LEFT    (1 << 5)
 #define ON_THE_RIGHT   (1 << 7)
 
+#define FACING_MASK    (FACING_UP | FACING_DOWN | FACING_LEFT | FACING_RIGHT)
+
+
+struct Is {
+    bool facing_up : 1;
+    bool facing_down : 1;
+    bool facing_left : 1;
+    bool facing_right : 1;
+    bool above : 1;
+    bool below : 1;
+    bool on_the_right : 1;
+    bool on_the_left : 1;
+};
 
 struct Circle {
     vec2 position;
@@ -31,33 +44,22 @@ struct Circle {
 struct TileEdge {
     vec2i from{};
     vec2i to{};
-    i32 length = 0;
+    // i32 length = 0;
     // i32 portal_ray_rotation = 0;
     // TileEdge* portal_to;
     // bool portal_edge_dir_flip;
     u8 texture_id = 0;
     u8 is = 0;
-};
 
-struct LocalEdge {
-    vec2 from;
-    vec2 to;
-    u8 is;
-    u8 texture_id;
-    // LocalEdge * portal_to;
-
-    INLINE_XPU bool fromTileEdge(const TileEdge& edge, const vec2& origin) {
-        texture_id = edge.texture_id;
-        from = vec2((f32)edge.from.x - origin.x, (f32)edge.from.y - origin.y);
-        to = vec2((f32)edge.to.x - origin.x, (f32)edge.to.y - origin.y);
-        is = edge.is;
+    INLINE_XPU bool isVisible(const vec2& origin) {
+        is &= FACING_MASK;
 
         if (is & (FACING_LEFT | FACING_RIGHT)) {
-            if (from.x > 0) is |= ON_THE_RIGHT;
-            if (to.x   < 0) is |= ON_THE_LEFT;
+            if (from.x > origin.x) is |= ON_THE_RIGHT;
+            if (to.x   < origin.x) is |= ON_THE_LEFT;
         } else {
-            if (to.y   < 0) is |= ABOVE;
-            if (from.y > 0) is |= BELOW;
+            if (to.y   < origin.y) is |= ABOVE;
+            if (from.y > origin.y) is |= BELOW;
         }
 
         return is & FACING_LEFT  && is & ON_THE_RIGHT ||

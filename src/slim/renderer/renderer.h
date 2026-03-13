@@ -10,7 +10,7 @@
 #else
 #define USE_GPU_BY_DEFAULT false
 void initDataOnGPU(const RayCasterSettings& settings) {}
-void uploadLocalEdges(const Slice<LocalEdge>& local_edges) {}
+void uploadVisibleEdgeIds(const Slice<u16>& visible_edge_ids) {}
 void uploadEdges(const Slice<TileEdge>& edges) {}
 void uploadColumns(const Slice<Circle>& columns) {}
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
@@ -41,13 +41,16 @@ namespace ray_cast_renderer {
     Color torch_light_color{1.0f, 0.6f, 0.35f};
     f32 torch_light_intensity = 4.0f;
 
-    void toggleUseOfGPU() {
+    void toggleUseOfGPU(const TileMap& tile_map) {
 #ifdef __CUDACC__
         if (useGPU) {
             downloadWallHits(wall_hits, ray_caster.screen_width);
             useGPU = false;
         } else {
             uploadWallHits(wall_hits, ray_caster.screen_width);
+            uploadColumns(tile_map.columns);
+            uploadEdges(tile_map.edges);
+            uploadVisibleEdgeIds(tile_map.visible_edge_ids);
             useGPU = true;
         }
 #endif
@@ -93,7 +96,7 @@ namespace ray_cast_renderer {
             RayHit closest_hit;
             ray_direction = ray_caster.first_ray_direction;
             for (u16 x = 0; x < ray_caster.screen_width; x++, ray_direction += ray_caster.right_step) {
-                ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, tile_map.local_edges, tile_map.columns);
+                ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, tile_map.visible_edge_ids, tile_map.edges, tile_map.columns);
                 wall_hits[x] = wall_hit;
             }
         }
@@ -194,7 +197,10 @@ namespace ray_cast_renderer {
         camera.position.z = position.y;
         ray_caster.position = position;
         moveTileMap(tile_map, position);
-        uploadLocalEdges(tile_map.local_edges);
+        if (useGPU) {
+            uploadEdges(tile_map.edges);
+            uploadVisibleEdgeIds(tile_map.visible_edge_ids);
+        }
     }
 
     void onScreenChanged(const Camera& camera, const TileMap& tile_map) {
@@ -290,7 +296,7 @@ namespace ray_cast_renderer {
                 generateTileMapEdges(tile_map);
                 moveTileMap(tile_map, ray_caster.position);
                 if (useGPU) {
-                    uploadLocalEdges(tile_map.local_edges);
+                    uploadVisibleEdgeIds(tile_map.visible_edge_ids);
                     uploadEdges(tile_map.edges);
                 }
                 generateWallHits(tile_map);
