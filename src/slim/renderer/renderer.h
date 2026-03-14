@@ -46,6 +46,13 @@ namespace ray_cast_renderer {
         Color color;
         f32 spawned_time;
         volatile u16 projectile_index;
+
+        f32 computeRadius(const f32 time) {
+            const f32 elapsed_time = time - spawned_time;
+            return elapsed_time <= PORTAL_GROW_TIME ?
+                (INITIAL_PORTAL_RADIUS + 0.04f + (FINAL_PORTAL_RADIUS - INITIAL_PORTAL_RADIUS) * smoothStep(0.0f, 1.0f, elapsed_time / PORTAL_GROW_TIME)) :
+                (FINAL_PORTAL_RADIUS + cos((elapsed_time - PORTAL_GROW_TIME) * 2.0f) * 0.04f);
+        }
     };
 
     PortalState portal_from{Cyan, 0.0f, INVALID_PROJECTILE_INDEX};
@@ -139,15 +146,11 @@ namespace ray_cast_renderer {
     }
 
     void update(const f32 time, const f32 delta_time, const TileMap& tile_map) {
-        if (render_state.portal_from.edge_id != INVALID_EDGE_ID &&
-            render_state.portal_from.radius < FINAL_PORTAL_RADIUS)
-            render_state.portal_from.radius = smoothStep(INITIAL_PORTAL_RADIUS, FINAL_PORTAL_RADIUS,
-                (time - portal_from.spawned_time) / PORTAL_GROW_TIME);
+        if (render_state.portal_from.edge_id != INVALID_EDGE_ID)
+            render_state.portal_from.radius = portal_from.computeRadius(time);
 
-        if (render_state.portal_to.edge_id != INVALID_EDGE_ID &&
-            render_state.portal_to.radius < FINAL_PORTAL_RADIUS)
-            render_state.portal_to.radius = smoothStep(INITIAL_PORTAL_RADIUS, FINAL_PORTAL_RADIUS,
-                (time - portal_to.spawned_time) / PORTAL_GROW_TIME);
+        if (render_state.portal_to.edge_id != INVALID_EDGE_ID)
+            render_state.portal_to.radius = portal_to.computeRadius(time);
 
         if (projectile_count == 0)
             return;
@@ -190,7 +193,7 @@ namespace ray_cast_renderer {
                 }
 
                 projectile_position += ray_direction_3d * (sqrt(hit_distance) / distance_2d);
-                if (abs(projectile_position.y) < FINAL_PORTAL_RADIUS) {
+                if (abs(projectile_position.y) < (FINAL_PORTAL_RADIUS * 0.6f)) {
                     const bool is_from = portal_from.projectile_index == i;
 
                     Portal& portal{      is_from ? render_state.portal_from : render_state.portal_to};

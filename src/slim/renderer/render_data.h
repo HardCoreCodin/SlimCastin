@@ -28,8 +28,8 @@ INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start &
 #define MAX_POINT_LIGHTS 16
 
 #define INITIAL_PORTAL_RADIUS 0.1f
-#define FINAL_PORTAL_RADIUS 0.6f
-#define PORTAL_GROW_TIME 0.5f
+#define FINAL_PORTAL_RADIUS 0.4f
+#define PORTAL_GROW_TIME 1.5f
 
 
 enum FilterMode {
