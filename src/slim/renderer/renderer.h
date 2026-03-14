@@ -22,6 +22,7 @@ void downloadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
 WallHit wall_hits[MAX_WALL_HITS_COUNT];
 GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
 
+#define INVALID_PROJECTILE_INDEX ((u8)(-1))
 
 namespace ray_cast_renderer {
     RayCasterSettings* settings;
@@ -35,11 +36,20 @@ namespace ray_cast_renderer {
 
     RenderState render_state;
 
-    SpinningProjectile projectiles[7];
+    SpinningProjectile projectiles[MAX_POINT_LIGHTS];
     u8 projectile_count = 0;
 
     Color torch_light_color{1.0f, 0.6f, 0.35f};
     f32 torch_light_intensity = 4.0f;
+
+    struct PortalState {
+        Color color;
+        f32 spawned_time;
+        volatile u16 projectile_index;
+    };
+
+    PortalState portal_from{Cyan, 0.0f, INVALID_PROJECTILE_INDEX};
+    PortalState portal_to{Magenta, 0.0f, INVALID_PROJECTILE_INDEX};
 
     void toggleUseOfGPU(const TileMap& tile_map) {
 #ifdef __CUDACC__
@@ -66,7 +76,7 @@ namespace ray_cast_renderer {
 
         for (; y < ray_caster.mid_point; y++, Y -= screen_pixel_height) {
             Z = 1.0f / Y;
-            ground_hits[y].z = Z;
+            ground_hits[y].z = Z * 2.0f;
             ground_hits[y].mip = computeMip(Z - priorZ, ray_caster.texel_size, ray_caster.last_mip);
             priorZ = Z;
         }
@@ -77,7 +87,7 @@ namespace ray_cast_renderer {
 
         for (; y > ray_caster.mid_point; y--, Y -= screen_pixel_height) {
             Z = 1.0f / Y;
-            ground_hits[y].z = Z;
+            ground_hits[y].z = Z * 2.0f;
             ground_hits[y].mip = computeMip(Z - priorZ, ray_caster.texel_size, ray_caster.last_mip);
             priorZ = Z;
         }
@@ -102,35 +112,104 @@ namespace ray_cast_renderer {
         }
     }
 
-    void shoot(const f32 time) {
-        if (render_state.light_count == 8)
-            return;
-
+    void addLightProjectile(const f32 time, const Color color) {
         SpinningProjectile& projectile{projectiles[projectile_count++]};
         PointLight& point_light{render_state.lights[render_state.light_count++]};
 
         projectile.init(ray_caster.position, ray_caster.forward, ray_caster.up_aim, settings->projectile_radius, time);
 
         point_light.position = projectile.position;
-        point_light.color = torch_light_color;
+        point_light.color = color;
         point_light.intensity = torch_light_intensity * 0.25f;
     }
 
-    void updateProjectiles(const f32 time, const f32 delta_time, const TileMap& tile_map) {
+    void fireFlare(const f32 time) {
+        if (render_state.light_count < (MAX_POINT_LIGHTS - 2))
+            addLightProjectile(time, torch_light_color);
+    }
+
+    void launchPortalFrom(const f32 time) {
+        portal_from.projectile_index = projectile_count;
+        addLightProjectile(time, portal_from.color);
+    }
+
+    void launchPortalTo(const f32 time) {
+        portal_to.projectile_index = projectile_count;
+        addLightProjectile(time, portal_to.color);
+    }
+
+    void update(const f32 time, const f32 delta_time, const TileMap& tile_map) {
+        if (render_state.portal_from.edge_id != INVALID_EDGE_ID &&
+            render_state.portal_from.radius < FINAL_PORTAL_RADIUS)
+            render_state.portal_from.radius = smoothStep(INITIAL_PORTAL_RADIUS, FINAL_PORTAL_RADIUS,
+                (time - portal_from.spawned_time) / PORTAL_GROW_TIME);
+
+        if (render_state.portal_to.edge_id != INVALID_EDGE_ID &&
+            render_state.portal_to.radius < FINAL_PORTAL_RADIUS)
+            render_state.portal_to.radius = smoothStep(INITIAL_PORTAL_RADIUS, FINAL_PORTAL_RADIUS,
+                (time - portal_to.spawned_time) / PORTAL_GROW_TIME);
+
+        if (projectile_count == 0)
+            return;
+
         const vec2 start = 1.0f;
         const vec2 end = {
             (f32)(settings->tile_map_width - 1),
             (f32)(settings->tile_map_height - 1)
         };
-        for (i32 i = 0; i < projectile_count; i++) {
+        for (u16 i = 0; i < projectile_count; i++) {
             SpinningProjectile& projectile{projectiles[i]};
             const f32 elapsed_time = time - projectile.spawned_time;
+            vec3 projectile_position = projectile.position;
             projectile.updatePosition(delta_time * settings->projectile_speed);
 
-            bool remove = projectile.position.y >= 1.0f ||
-                          projectile.position.y <= -1.0f ||
+            bool above_or_below = projectile.position.y >= 1.0f ||
+                                  projectile.position.y <= -1.0f;
+            bool remove = above_or_below ||
                           !inRange(start, {projectile.position.x, projectile.position.z}, end) ||
                           tile_map.cells[(i32)projectile.position.z][(i32)projectile.position.x].is_full;
+            if (remove && !above_or_below && (i == portal_from.projectile_index || i == portal_to.projectile_index)) {
+                Ray ray;
+                TileEdge edge;
+
+                vec3 ray_direction_3d = projectile.position - projectile_position;
+                vec2 ray_direction_2d = vec2{ray_direction_3d.x, ray_direction_3d.z};
+                const f32 distance_2d = ray_direction_2d.length();
+                ray.update(vec2{projectile_position.x, projectile_position.z}, ray_direction_2d / distance_2d);
+                f32 hit_distance = 1000000.0f;
+                u16 closest_hit_edge_id = INVALID_EDGE_ID;
+                for (u16 edge_id = 0; edge_id < (u16)tile_map.edges.size; edge_id++) {
+                    edge = tile_map.edges.data[edge_id];
+                    if (edge.isVisible(ray.origin) && ray.intersectsWithEdge(edge)) {
+                        ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
+                        if (ray.hit.distance < hit_distance) {
+                            hit_distance = ray.hit.distance;
+                            closest_hit_edge_id = edge_id;
+                        }
+                    }
+                }
+
+                projectile_position += ray_direction_3d * (sqrt(hit_distance) / distance_2d);
+                if (abs(projectile_position.y) < FINAL_PORTAL_RADIUS) {
+                    const bool is_from = portal_from.projectile_index == i;
+
+                    Portal& portal{      is_from ? render_state.portal_from : render_state.portal_to};
+                    Portal& other_portal{is_from ? render_state.portal_to : render_state.portal_from};
+
+                    if (other_portal.edge_id == INVALID_EDGE_ID ||
+                        (other_portal.position - projectile_position).length() > (2 * FINAL_PORTAL_RADIUS)) {
+                        PortalState& portal_state{is_from ? portal_from : portal_to};
+                        portal_state.spawned_time = time;
+                        portal_state.projectile_index = INVALID_PROJECTILE_INDEX;
+
+                        portal.position = projectile_position;
+                        portal.edge_id = closest_hit_edge_id;
+                        portal.edge_is = tile_map.edges[closest_hit_edge_id].is;
+                        portal.radius = INITIAL_PORTAL_RADIUS;
+                        portal.color = portal_state.color;
+                    }
+                }
+            }
             if (!remove) {
                 for (u8 c = 0; c < tile_map.columns.size; c++) {
                     const Circle& column{tile_map.columns.data[c]};
@@ -144,8 +223,19 @@ namespace ray_cast_renderer {
             if (remove) {
                 projectile_count--;
                 render_state.light_count--;
-                if (projectile_count == 0)
+                if (projectile_count == 0) {
+                    if (portal_from.projectile_index == 0)
+                        portal_from.projectile_index = INVALID_EDGE_ID;
+                    if (portal_to.projectile_index == 0)
+                        portal_to.projectile_index = INVALID_EDGE_ID;
+
                     return;
+                }
+
+                if (portal_from.projectile_index == projectile_count)
+                    portal_from.projectile_index = i;
+                if (portal_to.projectile_index == projectile_count)
+                    portal_to.projectile_index = i;
 
                 projectiles[i] = projectiles[projectile_count];
                 render_state.lights[i] = render_state.lights[render_state.light_count];
@@ -155,7 +245,12 @@ namespace ray_cast_renderer {
 
             PointLight& point_light{render_state.lights[i+1]};
             point_light.position = projectile.position;
-            point_light.flicker(torch_light_color, torch_light_intensity * 0.25f, elapsed_time);
+            if (i == portal_from.projectile_index)
+                point_light.flicker(portal_from.color, torch_light_intensity * 0.25f, elapsed_time);
+            else if (i == portal_to.projectile_index)
+                point_light.flicker(portal_to.color, torch_light_intensity * 0.25f, elapsed_time);
+            else
+                point_light.flicker(torch_light_color, torch_light_intensity * 0.25f, elapsed_time);
         }
     }
 

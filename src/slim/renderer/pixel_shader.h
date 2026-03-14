@@ -99,6 +99,8 @@ struct PixelShader {
             P.x = ray_hit_position.x;
             P.z = ray_hit_position.y;
             P.y = is_ceiling ? 1.0f : -1.0f;
+            // u *= 0.5f;
+            // v *= 0.5f;
         } else {
             mip_level = wall_hit.mip;
             v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
@@ -111,6 +113,8 @@ struct PixelShader {
             P.x = wall_hit.hit_position.x;
             P.z = wall_hit.hit_position.y;
             P.y = (1.0f - v) * 2.0f - 1.0f;
+            v *= 2.0f;
+            v -= (f32)(i32)v;
         }
 
         if (render_state.render_mode == RenderMode_Beauty ||
@@ -171,6 +175,20 @@ struct PixelShader {
                         settings.untextured_floor_color :
                         settings.untextured_wall_color)); break;
             default: {
+                if (!(edge_is == ABOVE || edge_is == BELOW)) {
+                    if (render_state.portal_from.edge_id != INVALID_EDGE_ID && render_state.portal_from.edge_is == edge_is) {
+                        f32 dist = (P - render_state.portal_from.position).squaredLength();
+                        if (dist < (render_state.portal_from.radius * render_state.portal_from.radius))
+                            pixel *= render_state.portal_from.color;
+                    }
+
+                    if (render_state.portal_to.edge_id != INVALID_EDGE_ID && render_state.portal_to.edge_is == edge_is) {
+                        f32 dist = (P - render_state.portal_to.position).squaredLength();
+                        if (dist < (render_state.portal_to.radius * render_state.portal_to.radius))
+                            pixel *= render_state.portal_to.color;
+                    }
+                }
+
                 Ray ray;
                 TileEdge edge;
                 Color light = Black;
@@ -240,6 +258,7 @@ struct PixelShader {
 
                     if (i) {
                         const vec3 RoL = Ro - point_light.position;
+                        // if (!(edge_is == ABOVE || edge_is == BELOW)) V.y *= 0.5f;
                         const f32 distance = (V * V.dot(RoL) - RoL).length();
                         if (distance < settings.projectile_radius) {
                             f32 flare_intensity = 1.0f - ((distance) / (settings.projectile_radius));

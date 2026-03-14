@@ -151,7 +151,10 @@ struct DungeonCrawler : SlimApp {
 	RayCasterSettings settings;
 
 	bool initted = false;
-	bool fired = false;
+	bool fired_flare = false;
+	bool launched_portal_from = false;
+	bool launched_portal_to = false;
+
 	f32 time = 0.0f;
 
     void OnUpdate(f32 delta_time) override {
@@ -180,12 +183,19 @@ struct DungeonCrawler : SlimApp {
 
     	torch.flicker(ray_cast_renderer::torch_light_color, ray_cast_renderer::torch_light_intensity, time);
 
-    	if (ray_cast_renderer::projectile_count)
-    		ray_cast_renderer::updateProjectiles(time, delta_time, tile_map);
+    	ray_cast_renderer::update(time, delta_time, tile_map);
 
-    	if (fired) {
-    		fired = false;
-    		ray_cast_renderer::shoot(time);
+    	if (fired_flare) {
+    		fired_flare = false;
+    		ray_cast_renderer::fireFlare(time);
+    	}
+    	if (launched_portal_from) {
+    		launched_portal_from = false;
+    		ray_cast_renderer::launchPortalFrom(time);
+    	}
+    	if (launched_portal_to) {
+    		launched_portal_to = false;
+    		ray_cast_renderer::launchPortalTo(time);
     	}
     }
 
@@ -199,14 +209,26 @@ struct DungeonCrawler : SlimApp {
     	u8& flags{ray_cast_renderer::render_state.flags};
     	RenderMode& render_mode{ray_cast_renderer::render_state.render_mode};
     	if (is_pressed) {
-    		if (key == controls::key_map::ctrl) flags |= EDITING_WALLS;
-    		if (key == controls::key_map::alt) flags |= EDITING_COLUMNS;
+    		if (!mouse::is_captured) {
+    			if (key == controls::key_map::ctrl) flags |= EDITING_WALLS;
+    			if (key == controls::key_map::alt) flags |= EDITING_COLUMNS;
+    		}
     	} else {
-    		if (key == controls::key_map::space && ray_cast_renderer::projectile_count < 7) fired = true;
-    		if (key == controls::key_map::ctrl) flags &= ~EDITING_WALLS;
-    		if (key == controls::key_map::alt) flags &= ~EDITING_COLUMNS;
-    		if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
-            if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
+    		if (mouse::is_captured) {
+    			if (key == controls::key_map::space) {
+    				if (controls::is_pressed::shift)
+    					launched_portal_to = true;
+    				else if (controls::is_pressed::ctrl)
+    					launched_portal_from = true;
+    				else
+    					fired_flare = true;
+    			}
+    		} else {
+    			if (key == controls::key_map::ctrl) flags &= ~EDITING_WALLS;
+    			if (key == controls::key_map::alt) flags &= ~EDITING_COLUMNS;
+    			if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
+    		}
+    		if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
         	if (key == 'L') flags = BRDF_Lambert | (flags & ~BRDF_MASK);
         	if (key == 'B') flags = BRDF_Blinn | (flags & ~BRDF_MASK);
         	if (key == 'X') flags = BRDF_GGX | (flags & ~BRDF_MASK);

@@ -25,7 +25,11 @@ INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start &
 #define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
 #define BRDF_MASK 3
 
-#define MAX_POINT_LIGHTS 8
+#define MAX_POINT_LIGHTS 16
+
+#define INITIAL_PORTAL_RADIUS 0.1f
+#define FINAL_PORTAL_RADIUS 0.6f
+#define PORTAL_GROW_TIME 0.5f
 
 
 enum FilterMode {
@@ -84,7 +88,7 @@ struct RayCasterSettings {
         body_radius = 0.2f;
         initial_column_radius = 0.1f;
 
-        projectile_speed = 3.0f;
+        projectile_speed = 6.0f;
         projectile_radius = 0.2f;
     }
 };
@@ -126,8 +130,26 @@ struct PointLight {
 };
 
 
+struct Portal {
+    Color color;
+    vec3 position;
+    f32 radius;
+    u16 edge_id;
+    u8 edge_is;
+
+    void init() {
+        color = Black;
+        position = vec3{0.0f};
+        radius = 0.0f;
+        edge_id = INVALID_EDGE_ID;
+        edge_is = 0;
+    }
+};
+
+
 struct RenderState {
-    PointLight lights[8];
+    PointLight lights[MAX_POINT_LIGHTS];
+    Portal portal_from, portal_to;
     RenderMode render_mode;
     u8 light_count;
     u8 flags;
@@ -141,6 +163,9 @@ struct RenderState {
         render_mode = RAY_CASTER_DEFAULT_SETTINGS_RENDER_MODE;
         hovered_pos = 0.0f;
         light_count = 1;
+
+        portal_from.init();
+        portal_to.init();
     }
 };
 
