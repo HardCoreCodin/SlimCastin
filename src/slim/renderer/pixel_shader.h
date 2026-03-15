@@ -232,7 +232,6 @@ struct PixelShader {
                         settings.untextured_wall_color)); break;
             default: {
                 Ray ray;
-                TileEdge edge;
                 Color light = Black;
                 Color flare = Black;
                 Color portal_glow = Black;
@@ -262,8 +261,7 @@ struct PixelShader {
                         ray.update(vec2{P.x, P.z}, L2d / sqrtf(distance_2d_squared));
                         f32 closest_hit_distance = 1000000.0f;
                         for (u16 e = 0; e < (u16)edges.size; e++) {
-                            edge = edges.data[e];
-                            if (edge.isVisible(ray.origin) && ray.intersectsWithEdge(edge)) {
+                            if (ray.intersectsWithEdge(edges.data[e])) {
                                 ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
                                 if (ray.hit.distance < closest_hit_distance)
                                     closest_hit_distance = ray.hit.distance;

@@ -59,11 +59,10 @@ typedef Slice<Tile> TileRow;
 struct TileMap : Grid<Tile> {
 	Slice<Circle> columns;
 	Slice<TileEdge> edges;
-	Slice<u16> visible_edge_ids;
 
 	u8 columns_texture_id;
 
-	i32 portal_sides_count;
+	// i32 portal_sides_count;
 	// Slice<TileSide*> portal_sides;
 	std::unordered_map<TileSide*, Tile*> side_to_tile;
 
@@ -71,7 +70,6 @@ struct TileMap : Grid<Tile> {
 	TileRow all_rows[MAX_TILE_MAP_HEIGHT];
 	Tile all_tiles[MAX_TILE_MAP_SIZE];
 	TileEdge all_edges[MAX_TILE_MAP_EDGES];
-	u16 all_visible_edge_ids[MAX_TILE_MAP_EDGES];
 	Circle all_columns[MAX_COLUMN_COUNT];
 };
 
@@ -112,9 +110,8 @@ void initTileMap(TileMap& tm, u16 Width = MAX_TILE_MAP_WIDTH, u16 Height = MAX_T
 	for (int i = 0; i < MAX_TILE_MAP_SIZE; i++) initTile(tm.all_tiles + i);
 	setSliceToStaticArray(tm.columns, tm.all_columns);
 	setSliceToStaticArray(tm.edges, tm.all_edges);
-	setSliceToStaticArray(tm.visible_edge_ids, tm.all_visible_edge_ids);
 
-	tm.columns.size = tm.edges.size = tm.visible_edge_ids.size = 0;
+	tm.columns.size = tm.edges.size = 0;
 	// setSliceToStaticArray(tm.portal_sides, tm.all_portal_sides);
 	initGrid<Tile>(tm, Width, Height, {&tm.all_tiles[0], ARRAY_SIZE(tm.all_tiles)});
 }
@@ -131,7 +128,7 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 
 	std::unordered_map<TileSide*, TileSide*> cell_side_to_tile_side;
 	// bool has_portals = false;
-	tm.portal_sides_count = 0;
+	// tm.portal_sides_count = 0;
 
 	Slice<Tile>* row = nullptr;
 	Tile* tile = nullptr;
@@ -225,13 +222,13 @@ void readTileMap(TileMap& tm, Slice<Tile*> map_grid) {
 }
 
 
-void moveTileMap(TileMap& tm, const vec2& origin) {
-	TileEdge* edge = nullptr;
-	tm.visible_edge_ids.size = 0;
-	iterSlice(tm.edges, edge, i)
-		if (edge->isVisible(origin))
-			tm.visible_edge_ids.data[tm.visible_edge_ids.size++] = (u16)i;
-}
+// void moveTileMap(TileMap& tm, const vec2& origin) {
+// 	TileEdge* edge = nullptr;
+// 	tm.visible_edge_ids.size = 0;
+// 	iterSlice(tm.edges, edge, i)
+// 		if (edge->isVisible(origin))
+// 			tm.visible_edge_ids.data[tm.visible_edge_ids.size++] = (u16)i;
+// }
 
 
 struct TileCheck {

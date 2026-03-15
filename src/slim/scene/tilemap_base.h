@@ -51,20 +51,23 @@ struct TileEdge {
     u8 texture_id = 0;
     u8 is = 0;
 
-    INLINE_XPU bool isVisible(const vec2& origin) {
-        is &= FACING_MASK;
-
+    INLINE_XPU u8 isVisible(const vec2& origin) const {
+        u8 is_visible = 0;
         if (is & (FACING_LEFT | FACING_RIGHT)) {
-            if (from.x > origin.x) is |= ON_THE_RIGHT;
-            if (to.x   < origin.x) is |= ON_THE_LEFT;
+            if (from.x > origin.x) is_visible |= ON_THE_RIGHT;
+            if (to.x   < origin.x) is_visible |= ON_THE_LEFT;
         } else {
-            if (to.y   < origin.y) is |= ABOVE;
-            if (from.y > origin.y) is |= BELOW;
+            if (to.y   < origin.y) is_visible |= ABOVE;
+            if (from.y > origin.y) is_visible |= BELOW;
         }
 
-        return is & FACING_LEFT  && is & ON_THE_RIGHT ||
-               is & FACING_RIGHT && is & ON_THE_LEFT ||
-               is & FACING_DOWN  && is & ABOVE ||
-               is & FACING_UP    && is & BELOW;
+        if (!(
+            is & FACING_LEFT  && is_visible & ON_THE_RIGHT ||
+            is & FACING_RIGHT && is_visible & ON_THE_LEFT ||
+            is & FACING_DOWN  && is_visible & ABOVE ||
+            is & FACING_UP    && is_visible & BELOW))
+            is_visible = 0;
+
+        return is_visible;
     }
 };

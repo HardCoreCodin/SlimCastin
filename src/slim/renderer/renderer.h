@@ -10,7 +10,7 @@
 #else
 #define USE_GPU_BY_DEFAULT false
 void initDataOnGPU(const RayCasterSettings& settings) {}
-void uploadVisibleEdgeIds(const Slice<u16>& visible_edge_ids) {}
+// void uploadVisibleEdgeIds(const Slice<u16>& visible_edge_ids) {}
 void uploadEdges(const Slice<TileEdge>& edges) {}
 void uploadColumns(const Slice<Circle>& columns) {}
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
@@ -19,8 +19,7 @@ void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
 void downloadWallHits(WallHit* wall_hits, u16 wall_hits_count)  {}
 #endif
 
-WallHit wall_hits[MAX_WALL_HITS_COUNT];
-GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
+
 
 #define INVALID_PROJECTILE_INDEX ((u8)(-1))
 
@@ -35,6 +34,18 @@ namespace ray_cast_renderer {
     bool removing_tiles = false;
 
     RenderState render_state;
+
+    WallHit wall_hits[MAX_WALL_HITS_COUNT];
+    // WallHit portal_from_wall_hits[MAX_WALL_HITS_COUNT];
+    // WallHit portal_to_wall_hits[MAX_WALL_HITS_COUNT];
+    GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
+
+    // Slice<u16> visible_edge_ids;
+    // u16 all_visible_edge_ids[MAX_TILE_MAP_EDGES];
+    // Slice<u16> portal_from_visible_edge_ids;
+    // u16 all_portal_from_visible_edge_ids[MAX_TILE_MAP_EDGES];
+    // Slice<u16> portal_to_visible_edge_ids;
+    // u16 all_portal_to_visible_edge_ids[MAX_TILE_MAP_EDGES];
 
     SpinningProjectile projectiles[MAX_POINT_LIGHTS];
     u8 projectile_count = 0;
@@ -67,7 +78,13 @@ namespace ray_cast_renderer {
             uploadWallHits(wall_hits, ray_caster.screen_width);
             uploadColumns(tile_map.columns);
             uploadEdges(tile_map.edges);
-            uploadVisibleEdgeIds(tile_map.visible_edge_ids);
+            // uploadVisibleEdgeIds(visible_edge_ids);
+            // if (render_state.portal_from.edge_id != INVALID_PROJECTILE_INDEX) {
+            //     uploadPortalFromVisibleEdgeIds(portal_from_visible_edge_ids);
+            // }
+            // if (render_state.portal_to.edge_id != INVALID_PROJECTILE_INDEX)
+            //     uploadPortalToVisibleEdgeIds(portal_to_visible_edge_ids);
+
             useGPU = true;
         }
 #endif
@@ -113,7 +130,7 @@ namespace ray_cast_renderer {
             RayHit closest_hit;
             ray_direction = ray_caster.first_ray_direction;
             for (u16 x = 0; x < ray_caster.screen_width; x++, ray_direction += ray_caster.right_step) {
-                ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, tile_map.visible_edge_ids, tile_map.edges, tile_map.columns);
+                ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, tile_map.edges, tile_map.columns);
                 wall_hits[x] = wall_hit;
             }
         }
@@ -173,7 +190,6 @@ namespace ray_cast_renderer {
                           tile_map.cells[(i32)projectile.position.z][(i32)projectile.position.x].is_full;
             if (remove && !above_or_below && (i == portal_from.projectile_index || i == portal_to.projectile_index)) {
                 Ray ray;
-                TileEdge edge;
 
                 vec3 ray_direction_3d = projectile.position - projectile_position;
                 vec2 ray_direction_2d = vec2{ray_direction_3d.x, ray_direction_3d.z};
@@ -181,13 +197,14 @@ namespace ray_cast_renderer {
                 ray.update(vec2{projectile_position.x, projectile_position.z}, ray_direction_2d / distance_2d);
                 f32 hit_distance = 1000000.0f;
                 u16 closest_hit_edge_id = INVALID_EDGE_ID;
+                u8 closest_hit_edge_is = 0;
                 for (u16 edge_id = 0; edge_id < (u16)tile_map.edges.size; edge_id++) {
-                    edge = tile_map.edges.data[edge_id];
-                    if (edge.isVisible(ray.origin) && ray.intersectsWithEdge(edge)) {
+                    if (ray.intersectsWithEdge(tile_map.edges.data[edge_id])) {
                         ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
                         if (ray.hit.distance < hit_distance) {
                             hit_distance = ray.hit.distance;
                             closest_hit_edge_id = edge_id;
+                            closest_hit_edge_is = ray.hit.edge_is;
                         }
                     }
                 }
@@ -207,7 +224,7 @@ namespace ray_cast_renderer {
 
                         portal.position = projectile_position;
                         portal.edge_id = closest_hit_edge_id;
-                        portal.edge_is = tile_map.edges[closest_hit_edge_id].is;
+                        portal.edge_is = closest_hit_edge_is;
                         portal.radius = INITIAL_PORTAL_RADIUS;
                         portal.color = portal_state.color;
                     }
@@ -294,10 +311,10 @@ namespace ray_cast_renderer {
         camera.position.x = position.x;
         camera.position.z = position.y;
         ray_caster.position = position;
-        moveTileMap(tile_map, position);
+        // moveTileMap(tile_map, position);
         if (useGPU) {
             uploadEdges(tile_map.edges);
-            uploadVisibleEdgeIds(tile_map.visible_edge_ids);
+            // uploadVisibleEdgeIds(visible_edge_ids);
         }
     }
 
@@ -392,9 +409,9 @@ namespace ray_cast_renderer {
 
             if (tile_changed) {
                 generateTileMapEdges(tile_map);
-                moveTileMap(tile_map, ray_caster.position);
+                // moveTileMap(tile_map, ray_caster.position);
                 if (useGPU) {
-                    uploadVisibleEdgeIds(tile_map.visible_edge_ids);
+                    // uploadVisibleEdgeIds(tile_map.visible_edge_ids);
                     uploadEdges(tile_map.edges);
                 }
                 generateWallHits(tile_map);
@@ -450,6 +467,11 @@ namespace ray_cast_renderer {
     {
         settings = render_settings;
         render_state.init();
+
+        // setSliceToStaticArray(visible_edge_ids, all_visible_edge_ids);
+        // setSliceToStaticArray(portal_from_visible_edge_ids, all_portal_from_visible_edge_ids);
+        // setSliceToStaticArray(portal_to_visible_edge_ids, all_portal_to_visible_edge_ids);
+        // portal_from_visible_edge_ids.size = portal_to_visible_edge_ids.size = visible_edge_ids.size = 0;
 
         Texture &texture{settings->textures[0]};
         ray_caster.texel_size = 1.0f / (f32)texture.width;

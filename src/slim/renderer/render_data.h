@@ -230,7 +230,7 @@ struct RayHit {
             return;
         }
 
-        edge_is = edges[edge_id].is;
+        // edge_is = edges[edge_id].is;
         texture_id = edges[edge_id].texture_id;
 
         perp_distance = forward.dot(position - ray_origin);

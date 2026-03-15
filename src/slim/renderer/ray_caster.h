@@ -50,31 +50,44 @@ struct Ray {
         return false;
     }
 
-    INLINE_XPU bool intersectsWithEdge(const TileEdge& edge) {
+    INLINE_XPU u8 intersectsWithEdge(const TileEdge& edge) {
+        u8 is_visible = edge.isVisible(origin);
+        if (is_visible == 0)
+            return 0;
+
         if (edge.is & (FACING_LEFT | FACING_RIGHT)) {
             if (is_vertical ||
-                (is_facing_right && (edge.is & ON_THE_LEFT)) ||
-                (is_facing_left && (edge.is & ON_THE_RIGHT)))
-                return false;
+                (is_facing_right && (is_visible & ON_THE_LEFT)) ||
+                (is_facing_left && (is_visible & ON_THE_RIGHT)))
+                return 0;
 
             hit.position = (f32)edge.to.x - origin.x;
             hit.position.y *= rise_over_run;
             hit.position += origin;
 
-            return inRange((f32)edge.from.y, hit.position.y, (f32)edge.to.y);
+            if (inRange((f32)edge.from.y, hit.position.y, (f32)edge.to.y)) {
+                hit.edge_is = edge.is | is_visible;
+                return is_visible;
+            }
+
+            return 0;
         }
 
         // Edge is horizontal:
         if (is_horizontal ||
-            (is_facing_up && (edge.is & BELOW)) ||
-            (is_facing_down && (edge.is & ABOVE)))
-            return false;
+            (is_facing_up && (is_visible & BELOW)) ||
+            (is_facing_down && (is_visible & ABOVE)))
+            return 0;
 
         hit.position = (f32)edge.to.y - origin.y;
         hit.position.x *= run_over_rise;
         hit.position += origin;
 
-        return inRange((f32)edge.from.x, hit.position.x, (f32)edge.to.x);
+        if (inRange((f32)edge.from.x, hit.position.x, (f32)edge.to.x)) {
+            hit.edge_is = edge.is | is_visible;
+            return is_visible;
+        }
+        return 0;
     }
 };
 
@@ -106,19 +119,19 @@ struct RayCaster {
         mid_point = (i32)((1.0f + up_aim) * (f32)(screen_height >> 1));
     }
 
-    INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<u16> &visible_edge_ids, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
+    INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
         ray.update(position, ray_direction);
         ray.hit.init();
         closest_hit.init();
         closest_hit.distance = 10000000;
         wall_hit.init();
 
-        for (u16 i = 0; i < (u16)visible_edge_ids.size; i++) {
-            if (ray.intersectsWithEdge(edges.data[visible_edge_ids[i]])) {
+        for (u16 i = 0; i < (u16)edges.size; i++) {
+            if (ray.intersectsWithEdge(edges.data[i])) {
                 ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
                 if (ray.hit.distance < closest_hit.distance) {
                     closest_hit = ray.hit;
-                    closest_hit.edge_id = visible_edge_ids[i];
+                    closest_hit.edge_id = i;
                 }
             }
         }

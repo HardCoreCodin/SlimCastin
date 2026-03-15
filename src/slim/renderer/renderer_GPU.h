@@ -8,6 +8,8 @@
 
 struct DeviceHits {
     WallHit* wall_hits;
+    // WallHit* portal_from_wall_hits;
+    // WallHit* portal_to_wall_hits;
     GroundHit* ground_hits;
 };
 
@@ -15,13 +17,17 @@ __constant__ RayCasterSettings d_settings;
 __constant__ u32* d_window_content;
 __constant__ DeviceHits d_hits;
 __constant__ Slice<Circle> d_columns;
-__constant__ Slice<u16> d_visible_edge_ids;
+// __constant__ Slice<u16> d_visible_edge_ids;
+// __constant__ Slice<u16> d_portal_to_visible_edge_ids;
+// __constant__ Slice<u16> d_portal_from_visible_edge_ids;
 __constant__ Slice<TileEdge> d_edges;
 
 RayCasterSettings t_settings;
 Slice<Circle> t_columns;
 Slice<TileEdge> t_edges;
 Slice<u16> t_visible_edge_ids;
+// Slice<u16> t_portal_to_visible_edge_ids;
+// Slice<u16> t_portal_from_visible_edge_ids;
 DeviceHits t_hits;
 TextureMip *t_texture_mips;
 TexelQuad *t_texel_quads;
@@ -36,7 +42,7 @@ __global__ void d_generateWallHits(RayCaster ray_caster) {
     RayHit closest_hit;
     Ray ray;
     vec2 ray_direction = ray_caster.first_ray_direction + (f32)x * ray_caster.right_step;
-    ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, d_visible_edge_ids, d_edges, d_columns);
+    ray_caster.generateWallHit(wall_hit, ray_direction, ray, closest_hit, d_edges, d_columns);
     d_hits.wall_hits[x] = wall_hit;
 }
 
@@ -105,13 +111,19 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     gpuErrchk(cudaMalloc(&t_texture_mips,   sizeof(TextureMip) * total_mip_count))
     gpuErrchk(cudaMalloc(&t_texel_quads,    sizeof(TexelQuad)  * total_texel_quads_count))
     gpuErrchk(cudaMalloc(&t_hits.wall_hits,   sizeof(WallHit) * MAX_WALL_HITS_COUNT))
+    // gpuErrchk(cudaMalloc(&t_hits.portal_from_wall_hits,   sizeof(WallHit) * MAX_WALL_HITS_COUNT))
+    // gpuErrchk(cudaMalloc(&t_hits.portal_to_wall_hits,   sizeof(WallHit) * MAX_WALL_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_hits.ground_hits,    sizeof(GroundHit)  * MAX_GROUND_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_visible_edge_ids.data,    sizeof(u16)  * MAX_TILE_MAP_EDGES))
+    // gpuErrchk(cudaMalloc(&t_portal_from_visible_edge_ids.data,    sizeof(u16)  * MAX_TILE_MAP_EDGES))
+    // gpuErrchk(cudaMalloc(&t_portal_to_visible_edge_ids.data,    sizeof(u16)  * MAX_TILE_MAP_EDGES))
     gpuErrchk(cudaMalloc(&t_edges.data,    sizeof(TileEdge)  * MAX_TILE_MAP_EDGES))
     gpuErrchk(cudaMalloc(&t_columns.data,    sizeof(Circle)  * MAX_COLUMN_COUNT))
 
     uploadConstant(&t_hits, d_hits);
-    uploadConstant(&t_visible_edge_ids, d_visible_edge_ids);
+    // uploadConstant(&t_visible_edge_ids, d_visible_edge_ids);
+    // uploadConstant(&t_portal_to_visible_edge_ids, d_portal_to_visible_edge_ids);
+    // uploadConstant(&t_portal_from_visible_edge_ids, d_portal_to_visible_edge_ids);
     uploadConstant(&t_edges, d_edges);
     uploadConstant(&t_columns, d_columns);
 
@@ -141,11 +153,23 @@ void initDataOnGPU(const RayCasterSettings& settings) {
     uploadConstant(&t_settings, d_settings)
 }
 
-void uploadVisibleEdgeIds(const Slice<u16>& visible_edge_ids) {
-    t_visible_edge_ids.size = visible_edge_ids.size;
-    uploadConstant(&t_visible_edge_ids, d_visible_edge_ids);
-    uploadN(visible_edge_ids.data, t_visible_edge_ids.data, visible_edge_ids.size)
-}
+// void uploadVisibleEdgeIds(const Slice<u16>& visible_edge_ids) {
+//     t_visible_edge_ids.size = visible_edge_ids.size;
+//     uploadConstant(&t_visible_edge_ids, d_visible_edge_ids);
+//     uploadN(visible_edge_ids.data, t_visible_edge_ids.data, visible_edge_ids.size)
+// }
+//
+// void uploadPortalToVisibleEdgeIds(const Slice<u16>& portal_to_visible_edge_ids) {
+//     t_portal_to_visible_edge_ids.size = portal_to_visible_edge_ids.size;
+//     uploadConstant(&t_portal_to_visible_edge_ids, d_visible_edge_ids);
+//     uploadN(portal_to_visible_edge_ids.data, t_portal_to_visible_edge_ids.data, portal_to_visible_edge_ids.size)
+// }
+//
+// void uploadPortalFromVisibleEdgeIds(const Slice<u16>& portal_from_visible_edge_ids) {
+//     t_portal_from_visible_edge_ids.size = portal_from_visible_edge_ids.size;
+//     uploadConstant(&t_portal_from_visible_edge_ids, d_portal_from_visible_edge_ids);
+//     uploadN(portal_from_visible_edge_ids.data, t_portal_from_visible_edge_ids.data, portal_from_visible_edge_ids.size)
+// }
 
 void uploadEdges(const Slice<TileEdge>& edges) {
     t_edges.size = edges.size;
@@ -166,6 +190,14 @@ void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {
 void uploadWallHits(WallHit* wall_hits, u16 wall_hits_count) {
     uploadN(wall_hits, t_hits.wall_hits, wall_hits_count)
 }
+//
+// void uploadPortalFromWallHits(WallHit* portal_from_wall_hits, u16 portal_from_wall_hits_count) {
+//     uploadN(portal_from_wall_hits, t_hits.portal_from_wall_hits, portal_from_wall_hits_count)
+// }
+//
+// void uploadPortalToWallHits(WallHit* portal_to_wall_hits, u16 portal_to_wall_hits_count) {
+//     uploadN(portal_to_wall_hits, t_hits.portal_to_wall_hits, portal_to_wall_hits_count)
+// }
 
 void downloadWallHits(WallHit* wall_hits, u16 wall_hits_count) {
     downloadN(t_hits.wall_hits, wall_hits, wall_hits_count)
