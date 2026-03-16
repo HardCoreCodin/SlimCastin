@@ -683,6 +683,7 @@ struct Color {
     INLINE_XPU Color(u32 value) : Color{ByteColor{value}} {}
     INLINE_XPU Color(f32 value) : red{value}, green{value}, blue{value} {}
     INLINE_XPU Color(f32 red, f32 green, f32 blue) : red{red}, green{green}, blue{blue} {}
+    INLINE_XPU Color(const Color& other) : Color(other.r, other.g, other.b) {}
     INLINE_XPU Color(enum ColorID color_id) : Color{0.0f} {
         switch (color_id) {
             case Black: break;
@@ -743,6 +744,13 @@ struct Color {
 
     INLINE_XPU Color& operator = (f32 value) {
         r = g = b = value;
+        return *this;
+    }
+
+    INLINE_XPU const Color& operator = (const Color& other) {
+        r = other.r;
+        g = other.g;
+        b = other.b;
         return *this;
     }
 

@@ -7,6 +7,7 @@ struct Ray {
     RayHit hit;
     vec2 origin;
     vec2 direction;
+    vec2 forward;
 
     f32 rise_over_run;
     f32 run_over_rise;
@@ -18,10 +19,10 @@ struct Ray {
     bool is_facing_left;
     bool is_facing_right;
 
-    INLINE_XPU void update(vec2 new_origin, vec2 new_direction) {//, vec2 new_forward) {
+    INLINE_XPU void update(vec2 new_origin, vec2 new_direction, vec2 new_forward) {
         origin = new_origin;
         direction = new_direction.normalized();
-        // forward = new_forward;
+        forward = new_forward;
         is_vertical     = direction.x == 0;
         is_horizontal   = direction.y == 0;
         is_facing_left  = direction.x < 0;
@@ -30,6 +31,14 @@ struct Ray {
         is_facing_down  = direction.y > 0;
         rise_over_run = direction.y / direction.x;
         run_over_rise = 1 / rise_over_run;
+        hit.init();
+    }
+
+    INLINE_XPU void finalizeHit(const TileEdge *edges, const Circle* columns) {
+        if (hit.column_id != INVALID_COLUMN_ID)
+            hit.finalizeFromColumn(columns[hit.column_id], origin, direction, forward);
+        else
+            hit.finalizeFromEdge(edges[hit.edge_id], origin, forward);
     }
 
     INLINE_XPU bool intersectsWithCircle(const Circle& circle) {
@@ -48,6 +57,18 @@ struct Ray {
         }
 
         return false;
+    }
+
+    INLINE_XPU void intersectWithEdgePlane(const TileEdge& edge) {
+        if (edge.is & (FACING_LEFT | FACING_RIGHT)) {
+            hit.position = (f32)edge.to.x - origin.x;
+            hit.position.y *= rise_over_run;
+            hit.position += origin;
+        } else {
+            hit.position = (f32)edge.to.y - origin.y;
+            hit.position.x *= run_over_rise;
+            hit.position += origin;
+        }
     }
 
     INLINE_XPU u8 intersectsWithEdge(const TileEdge& edge) {
@@ -93,6 +114,10 @@ struct Ray {
 
 
 struct RayCaster {
+    Portal portal_from;
+    Portal portal_to;
+    RayHit closest_hit;
+    Ray ray;
     vec2 position;
     vec2 forward;
     vec2 right_step;
@@ -119,9 +144,7 @@ struct RayCaster {
         mid_point = (i32)((1.0f + up_aim) * (f32)(screen_height >> 1));
     }
 
-    INLINE_XPU void generateWallHit(WallHit &wall_hit, const vec2 ray_direction, Ray &ray, RayHit &closest_hit, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
-        ray.update(position, ray_direction);
-        ray.hit.init();
+    INLINE_XPU void generateWallHit(WallHit &wall_hit, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
         closest_hit.init();
         closest_hit.distance = 10000000;
         wall_hit.init();
@@ -141,254 +164,90 @@ struct RayCaster {
         for (u8 i = 0; i < (u8)columns.size; i++)
             if (ray.intersectsWithCircle(columns[i]))
                 ray.hit.column_id = i;
+    }
 
+    INLINE_XPU void generateWallHitWithPortals(WallHitGroup &wall_hit_group, vec2 ray_direction, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
+        ray.update(position, ray_direction, forward);
+        generateWallHit(wall_hit_group.main, edges, columns);
+        if (!ray.hit.isValid())
+            return;
+
+        ray.hit.distance  = sqrt(ray.hit.distance);
+        ray.finalizeHit(edges.data, columns.data);
+        wall_hit_group.main.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+
+        if (portal_from.edge_id == INVALID_EDGE_ID ||
+            portal_to.edge_id == INVALID_EDGE_ID)
+            return;
+
+        const Portal* portal = nullptr;
+        if (ray.hit.edge_id == portal_from.edge_id && fabsf(
+            (portal_from.edge_is & (FACING_DOWN | FACING_UP)) ?
+            (portal_from.position.x - ray.hit.position.x) :
+            (portal_from.position.z - ray.hit.position.y)) < FINAL_PORTAL_RADIUS)
+            portal = &portal_from;
+        if (portal == nullptr && ray.hit.edge_id == portal_to.edge_id && fabsf(
+            (portal_to.edge_is & (FACING_DOWN | FACING_UP)) ?
+            (portal_to.position.x - ray.hit.position.x) :
+            (portal_to.position.z - ray.hit.position.y)) < FINAL_PORTAL_RADIUS)
+            portal = &portal_to;
+
+        if (portal == nullptr)
+            return;
+
+        const Portal& other_portal{portal == &portal_from ? portal_to : portal_from};
+        const vec2 other_portal_position{other_portal.position.x, other_portal.position.z};
+
+        i32 ray_rotation = 0;
+        const u8 from_edge_is = portal->edge_is;
+        const u8 to_edge_is = other_portal.edge_is;
+        if (from_edge_is & (FACING_LEFT | FACING_RIGHT)) {
+            if (to_edge_is & (FACING_DOWN | FACING_UP)) {
+            	if (from_edge_is & FACING_RIGHT)
+            	    ray_rotation = (to_edge_is & FACING_UP) ? 90 : -90;
+            	else
+            	    ray_rotation = (to_edge_is & FACING_DOWN) ? 90 : -90;
+            } else if ((from_edge_is & FACING_RIGHT) == (to_edge_is & FACING_RIGHT))
+                ray_rotation = 180;
+        } else
+            if (to_edge_is & (FACING_LEFT | FACING_RIGHT)) {
+            	if (from_edge_is & FACING_UP)
+            	    ray_rotation = (to_edge_is & FACING_LEFT) ? 90 : -90;
+            	else
+                    ray_rotation = (to_edge_is & FACING_RIGHT) ? 90 : -90;
+            } else
+                if ((from_edge_is & FACING_UP) == (to_edge_is & FACING_UP))
+                    ray_rotation = 180;
+
+        vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - position;
+        vec2 origin_to_hit_position = ray.hit.position - position;
+        vec2 ray_forward = forward;
+        if (ray_rotation == 90) {
+            ray_direction = ray_direction.ccw90();
+            ray_forward = forward.ccw90();
+            origin_to_hit_position = origin_to_hit_position.ccw90();
+            origin_to_portal = origin_to_portal.ccw90();
+        } else if (ray_rotation == -90) {
+            ray_direction = ray_direction.cw90();
+            ray_forward = forward.cw90();
+            origin_to_hit_position = origin_to_hit_position.cw90();
+            origin_to_portal = origin_to_portal.cw90();
+        } else if (ray_rotation == 180) {
+            ray_direction = -ray_direction;
+            ray_forward = -forward;
+            origin_to_hit_position = -origin_to_hit_position;
+            origin_to_portal = -origin_to_portal;
+        }
+
+        f32 prior_distance = ray.hit.distance;
+        wall_hit_group.portal_origin = other_portal_position - origin_to_portal;
+        ray.update( wall_hit_group.portal_origin + origin_to_hit_position * (1.0001f), ray_direction, ray_forward);
+        generateWallHit(wall_hit_group.portal, edges, columns);
         if (ray.hit.isValid()) {
-            ray.hit.distance  = sqrt(ray.hit.distance);
-            ray.hit.finalize(ray.origin, ray.direction, forward, edges.data, columns.data);
-            wall_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+            ray.hit.distance  = sqrt(ray.hit.distance) + prior_distance;
+            ray.origin = wall_hit_group.portal_origin;
+            ray.finalizeHit(edges.data, columns.data);
+            wall_hit_group.portal.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
         }
     }
 };
-
-
-
-// vec2 ccw90(vec2 v) { return vec2{-v.y, v.x}; }
-// vec2 cw90(vec2 v) { return vec2{v.y, -v.x}; }
-
-// vec2 forward;
-// vec2 primary_origin;
-// vec2 primary_direction;
-// vec2 primary_forward;
-
-// Ray* portal_rays[MAX_WIDTH];
-// int portal_ray_indices[MAX_WIDTH];
-
-    //
-    // void updateToHitPortalEdge() {
-    //     const TileEdge& edge = *hit.edge;
-    //     vec2 from, to, new_origin, new_direction, new_forward;
-    //
-    //     from.x = (f32)(edge.portal_edge_dir_flip ? edge.portal_to->to->x : edge.portal_to->from->x);
-    //     from.y = (f32)(edge.portal_edge_dir_flip ? edge.portal_to->to->y : edge.portal_to->from->y);
-    //     to.x   = (f32)(edge.portal_edge_dir_flip ? edge.portal_to->from->x : edge.portal_to->to->x);
-    //     to.y   = (f32)(edge.portal_edge_dir_flip ? edge.portal_to->from->y : edge.portal_to->to->y);
-    //
-    //     new_origin = lerp(from, to, hit.tile_fraction);
-    //
-    //     if (edge.portal_ray_rotation == 180) {
-    //         new_direction = -direction;
-    //         new_forward = -forward;
-    //     } else if (edge.portal_ray_rotation == 90) {
-    //         new_direction = ccw90(direction);
-    //         new_forward = ccw90(forward);
-    //     } else if (edge.portal_ray_rotation == -90) {
-    //         new_direction = cw90(direction);
-    //         new_forward = cw90(forward);
-    //     } else {
-    //         new_direction = direction;
-    //         new_forward = forward;
-    //     }
-    //     // new_origin.x += new_direction.x * EPS;
-    //     // new_origin.y += new_direction.y * EPS;
-    //
-    //     update(new_origin, new_direction, new_forward);
-    // }
-    //
-
-    // bool cast(vec2 forward, const Slice<LocalEdge> &local_edges, const Slice<Circle> &columns) { //, f32 prior_hit_distance = 0.0f, TileEdge* skip_edge = nullptr, bool primary_ray = true) {
-    //     RayHit closest_hit;
-    //     closest_hit.distance = 10000000;
-    //
-    //     LocalEdge *local_edge_ptr = nullptr;
-    //     LocalEdge local_edge;
-    //     iterSlice(local_edges, local_edge_ptr, i) {
-    //         local_edge = *local_edge_ptr;
-    //         // if (edge != skip_edge && edge->is_facing_forward && intersectsWithEdge(*edge)) {
-    //         if (intersectsWithEdge(local_edge)) {
-    //             hit.distance = hit.position.squaredLength();
-    //             if (hit.distance < closest_hit.distance) {
-    //                 closest_hit = hit;
-    //                 closest_hit.local_edge = local_edge;
-    //             }
-    //         }
-    //     }
-    //
-    //     hit = closest_hit;
-    //     hit.distance  = sqrt(hit.distance);// + prior_hit_distance;
-    //     hit.column = nullptr;
-    //
-    //     Circle *column_ptr;
-    //     iterSlice(columns, column_ptr, i)
-    //         intersectsWithCircle(*column_ptr);
-    //
-    //     vec2 local_hit_position = hit.position;
-    //
-    //     if (hit.column != nullptr) {
-    //         hit.local_edge = {};
-    //         hit.position = origin + direction * hit.distance;
-    //         hit.tile_coords.x = (i32)hit.position.x;
-    //         hit.tile_coords.y = (i32)hit.position.y;
-    //         hit.texture_u = getU(hit.position - hit.column->position);
-    //         hit.texture_u *= hit.column->radius;
-    //         hit.texture_id = 0;
-    //     } else {
-    //         hit.position += origin;
-    //
-    //         hit.tile_coords.x = (i32)hit.position.x;
-    //         hit.tile_coords.y = (i32)hit.position.y;
-    //
-    //         if (hit.local_edge.is & (FACING_LEFT | FACING_RIGHT)) {
-    //             hit.texture_u = local_hit_position.y - hit.local_edge.from.y;
-    //             if (hit.local_edge.is & FACING_RIGHT) hit.tile_coords.x -= 1;
-    //         } else {
-    //             hit.texture_u = local_hit_position.x - hit.local_edge.from.x;
-    //             if (hit.local_edge.is & FACING_DOWN) hit.tile_coords.y -= 1;
-    //         }
-    //         hit.texture_id = hit.local_edge.texture_id;
-    //     }
-    //     hit.texture_u -= (f32)(i32)hit.texture_u;
-    //
-    //     hit.perp_distance =
-    //         // primary_ray ?
-    //         forward.dot(local_hit_position);// :
-    //         // primary_forward.dot(primary_direction * hit.distance);
-    //
-    //     return true; //hit.edge == nullptr || hit.edge->portal_to == nullptr;
-    // }
-
-// u32 castRays(TileMap& tm, vec2 position) {
-//     u32 portal_ray_count = 0;
-//     u32 next_portal_ray_count = 0;
-//
-//     // RayHit closest_hit;
-//     Ray* ray = nullptr;
-//     iterSlice(rays, ray, ray_index){
-//         if (!ray->cast(tm)) {
-//             portal_rays[portal_ray_count] = ray;
-//             portal_ray_indices[portal_ray_count] = (i32)ray_index;
-//             portal_ray_count += 1;
-//         }
-//     }
-//
-//     u32 original_portal_rays_count = portal_ray_count;
-//
-//     while (portal_ray_count != 0) {
-//         next_portal_ray_count = 0;
-//         for (u32 ray_index = 0; ray_index < portal_ray_count; ray_index++) {
-//             ray = portal_rays[ray_index];
-//             ray->updateToHitPortalEdge();
-//             moveTileMap(tm, ray->origin);
-//             if (ray->cast(tm, ray->hit.edge->portal_to, ray->hit.distance, false)) {
-//                 portal_rays[next_portal_ray_count] = ray;
-//                 next_portal_ray_count += 1;
-//             }
-//         }
-//
-//         swap(&portal_ray_count, &next_portal_ray_count);
-//     }
-//
-//     vec2 pos;
-//     Slice<VerticalHit>* vertical_hit_row = nullptr;
-//     VerticalHit* vertical_hit = nullptr;
-//     iterSlice(vertical_hits.cells, vertical_hit_row, y) {
-//         if (y == 0) continue;
-//         iterSlice((*vertical_hit_row), vertical_hit, x) {
-//             pos = position + vertical_hit->direction;
-//             vertical_hit->found =
-//                 inRange(0.0f, pos.x, (f32)(tm.width - 1)) &&
-//                 inRange(0.0f, pos.y, (f32)(tm.height-1));
-//
-//             if (vertical_hit->found) {
-//                 vertical_hit->tile_coords.x = (i32)pos.x;
-//                 vertical_hit->tile_coords.y = (i32)pos.y;
-//                 vertical_hit->u = pos.x - (f32)vertical_hit->tile_coords.x;
-//                 vertical_hit->v = pos.y - (f32)vertical_hit->tile_coords.y;
-//
-//                 // if tile_coords.x != last_tile_coords.x ||
-//                 //    tile_coords.y != last_tile_coords.y {
-//
-//                 //     last_tile_texture_id = cells[tile_coords.y][tile_coords.x].texture_id;
-//                 //     last_tile_coords = tile_coords;
-//                 // }
-//             }
-//         }
-//     }
-//
-//     return original_portal_rays_count;
-// }
-
-/*
-
-INLINE_XPU void renderPixelBeauty(
-    const Viewport &viewport,
-    const RayCasterSettings &settings,
-    const CameraRayProjection &projection,
-    const TileMap &tile_map,
-    Ray &ray,
-    RayHit &hit,
-
-    const vec3 &direction,
-    const f32 half_max_distance,
-
-    Color &color,
-    f32 &depth
-) {
-    color = Black;
-    depth = INFINITY;
-
-    color.applyToneMapping();
-}
-
-INLINE_XPU void renderPixelDebugMode(
-    const RayCasterSettings &settings,
-    const CameraRayProjection &projection,
-    TileMap &tile_map,
-    Camera &camera,
-    Ray &ray,
-    RayHit &hit,
-
-    const vec3 &direction,
-    const f32 half_max_distance,
-
-    Color &color,
-    f32 &depth
-) {
-    color = Black;
-    depth = INFINITY;
-
-    // ray.reset(projection.camera_position, direction.normalized());
-
-    // surface.geometry = scene_tracer.trace(ray, hit, scene);
-    // if (surface.geometry) {
-    //     // surface.prepareForShading(ray, hit, scene.materials, scene.textures);
-    //     depth = projection.getDepthAt(hit.position);
-    //     switch (settings.render_mode) {
-    //         case RenderMode_UVs      : color = getColorByUV(hit.uv); break;
-    //         case RenderMode_Depth    : color = getColorByDistance(hit.distance); break;
-    //         case RenderMode_Normals  : color = directionToColor(hit.normal);  break;
-    //         case RenderMode_NormalMap: color = sampleNormal(*surface.material, hit, scene.textures);  break;
-    //         case RenderMode_MipLevel : color = scene.counts.textures ? settings.mip_level_colors[scene.textures[0].mipLevel(hit.uv_coverage)] : Grey;
-    //         default: break;
-    //     }
-    // }
-}
-
-INLINE_XPU void renderPixel(
-    const RayCasterSettings &settings,
-    const CameraRayProjection &projection,
-    TileMap &tile_map,
-    Camera &camera,
-    Ray &ray,
-    RayHit &hit,
-
-    const vec3 &direction,
-
-    Color &color,
-    f32 &depth
-) {
-    // if (settings.render_mode == RenderMode_Beauty)
-    //     renderPixelBeauty(settings, projection, tile_map, camera, ray, hit, direction, half_max_distance, color, depth);
-    // else
-    //     renderPixelDebugMode(settings, projection, tile_map, camera, ray, hit, direction, half_max_distance, color, depth);
-}
-*/

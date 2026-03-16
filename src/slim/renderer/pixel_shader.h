@@ -55,29 +55,24 @@ INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 NdotH) {
 struct PixelShader {
     const RayCasterSettings& settings;
     const RenderState& render_state;
-    Color pixel;
 
-    vec3 P, N, L, LP, V, R;
-    f32 NdotL, NdotV, roughness;
+    const Portal* portal;
     BRDFType brdf;
+    vec3 P, N, L, LP, V, R, Ro, PortalToP;
+    vec2 ground_hit_position;
+    f32 NdotL, NdotV, roughness, u, v, portal_blend_factor, portal_distance_fraction;
+    u8 mip_level, texture_id, edge_is;
+    bool blend_with_portal, has_both_portals;
 
-    INLINE_XPU const Color& shade(
+    INLINE_XPU bool prepare(
         const GroundHit& ground_hit,
         const WallHit& wall_hit,
-        const Slice<TileEdge>& edges,
-        const Slice<Circle>& columns,
+        const Portal& portal_from,
+        const Portal& portal_to,
         const vec2& position,
         u16 y,
         i32 mid_point) {
-        pixel = Magenta;
-
-        if (!wall_hit.isValid()) return pixel;
-
-        vec3 Ro;
-        f32 u, v;
-        u8 mip_level, texture_id, edge_is;
-
-        const vec2 ray_hit_position = position + wall_hit.ray_direction * ground_hit.z;
+        ground_hit_position = position + wall_hit.ray_direction * ground_hit.z;
         if (y < wall_hit.top ||
             y > wall_hit.bot) {
             const bool is_ceiling = y < mid_point;
@@ -86,21 +81,20 @@ struct PixelShader {
                 (f32)(settings.tile_map_width - 1),
                 (f32)(settings.tile_map_height - 1)
             };
-            if (!inRange(start, ray_hit_position, end)) return pixel;
+            if (!inRange(start, ground_hit_position, end))
+                return false;
 
             mip_level = ground_hit.mip;
-            v = ray_hit_position.y - (f32)(i32)ray_hit_position.y;
-            u = ray_hit_position.x - (f32)(i32)ray_hit_position.x;
+            v = ground_hit_position.y - (f32)(i32)ground_hit_position.y;
+            u = ground_hit_position.x - (f32)(i32)ground_hit_position.x;
             edge_is = is_ceiling ? ABOVE : BELOW;
             texture_id = is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id;
             Ro.x = position.x;
             Ro.z = position.y;
             Ro.y = 0.0f;
-            P.x = ray_hit_position.x;
-            P.z = ray_hit_position.y;
+            P.x = ground_hit_position.x;
+            P.z = ground_hit_position.y;
             P.y = is_ceiling ? 1.0f : -1.0f;
-            // u *= 0.5f;
-            // v *= 0.5f;
         } else {
             mip_level = wall_hit.mip;
             v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
@@ -117,6 +111,49 @@ struct PixelShader {
             v -= (f32)(i32)v;
         }
 
+        portal_blend_factor = 0.0f;
+        blend_with_portal = false;
+        has_both_portals = portal_from.edge_id != INVALID_EDGE_ID &&
+                           portal_to.edge_id != INVALID_EDGE_ID;
+        portal = nullptr;
+        portal_distance_fraction = 0.0f;
+
+        if (wall_hit.edge_id != INVALID_EDGE_ID &&
+            edge_is != ABOVE &&
+            edge_is != BELOW) {
+
+            if (portal_from.edge_id == wall_hit.edge_id) {
+                portal = &portal_from;
+                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - portal->position;
+                portal_distance_fraction = PortalToP.squaredLength();
+                if (portal_distance_fraction > (portal->radius * portal->radius))
+                    portal = nullptr;
+                }
+
+            if (portal == nullptr && portal_to.edge_id == wall_hit.edge_id) {
+                portal = &portal_to;
+                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - portal->position;
+                portal_distance_fraction = PortalToP.squaredLength();
+                if (portal_distance_fraction > (portal->radius * portal->radius))
+                    portal = nullptr;
+                }
+            if (portal) {
+                portal_distance_fraction = sqrt(portal_distance_fraction);
+                PortalToP /= portal_distance_fraction;
+                portal_distance_fraction = 1.0f - portal_distance_fraction / portal->radius;
+            }
+        }
+
+        return true;
+    }
+
+    INLINE_XPU Color render(
+        const WallHit& wall_hit,
+        const Slice<TileEdge>& edges,
+        const Slice<Circle>& columns,
+        Color &additional_light) {
+        additional_light = Black;
+        Color pixel = Magenta;
         if (render_state.render_mode == RenderMode_Beauty ||
             render_state.render_mode == RenderMode_Color)
             pixel = settings.textures[texture_id].mips[mip_level].sampleColor(u, v);
@@ -136,59 +173,30 @@ struct PixelShader {
                                   render_state.render_mode == RenderMode_Light;
         if (normalNeeded && (render_state.flags & USE_NORMAL_MAP))
             N = vec3{settings.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
-        f32 bump = 0.0f;
-        f32 portal_distance_fraction = 0.0f;
-        const Portal* portal = nullptr;
-        if (!(edge_is == ABOVE || edge_is == BELOW)) {
-            vec3 PortalToP;
-            if (render_state.portal_from.edge_id != INVALID_EDGE_ID &&
-                render_state.portal_from.edge_is == edge_is) {
-                portal = &render_state.portal_from;
-                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - portal->position;
-                portal_distance_fraction = PortalToP.squaredLength();
-                if (portal_distance_fraction > (portal->radius * portal->radius))
-                    portal = nullptr;
+
+        if (portal && normalNeeded && portal_distance_fraction < ((0.4f * (3.0f / 4.0f)))) {
+            if      (edge_is & FACING_DOWN ) PortalToP = {  PortalToP.x,  PortalToP.y, 1.0f - sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y)};
+            else if (edge_is & FACING_UP   ) PortalToP = {  -PortalToP.x, PortalToP.y, sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y) - 1.0f};
+            else if (edge_is & FACING_LEFT ) PortalToP = {-PortalToP.z,   PortalToP.y, 1.0f - sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y)};
+            else if (edge_is & FACING_RIGHT) PortalToP = { PortalToP.z,   PortalToP.y, sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y) - 1.0f};
+
+            f32 bump = portal_distance_fraction / (0.4f * (3.0f / 4.0f));
+            if (bump < 0.5f) {
+                if (bump < 0.25f)
+                    bump = smoothStep(0.0f, 1.0f, bump / 0.25f);
+                else
+                    bump = 1.0f - smoothStep(0.0f, 1.0f, (bump - 0.25f) / 0.25f);
+
+                N += PortalToP * bump;
+            } else {
+                if (bump < 0.75f)
+                    bump = smoothStep(0.0f, 1.0f, (bump - 0.5f) / 0.25f);
+                else
+                    bump = 1.0f - smoothStep(0.0f, 1.0f, (bump - 0.75f) / 0.25f);
+
+                N -= PortalToP * bump;
             }
-
-            if (!portal &&
-                render_state.portal_to.edge_id != INVALID_EDGE_ID &&
-                render_state.portal_to.edge_is == edge_is) {
-                portal = &render_state.portal_to;
-                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - portal->position;
-                portal_distance_fraction = PortalToP.squaredLength();
-                if (portal_distance_fraction > (portal->radius * portal->radius))
-                    portal = nullptr;
-            }
-
-            if (portal) {
-                portal_distance_fraction = sqrt(portal_distance_fraction);
-                PortalToP /= portal_distance_fraction;
-                portal_distance_fraction = 1.0f - portal_distance_fraction / portal->radius;
-                if (normalNeeded && portal_distance_fraction < ((0.4f * (3.0f / 4.0f)))) {
-                    if      (edge_is & FACING_DOWN ) PortalToP = {  PortalToP.x,  PortalToP.y, 1.0f - sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y)};
-                    else if (edge_is & FACING_UP   ) PortalToP = {  -PortalToP.x, PortalToP.y, sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y) - 1.0f};
-                    else if (edge_is & FACING_LEFT ) PortalToP = {-PortalToP.z,   PortalToP.y, 1.0f - sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y)};
-                    else if (edge_is & FACING_RIGHT) PortalToP = { PortalToP.z,   PortalToP.y, sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y) - 1.0f};
-
-                    bump = portal_distance_fraction / (0.4f * (3.0f / 4.0f));
-                    if (bump < 0.5f) {
-                        if (bump < 0.25f)
-                            bump = smoothStep(0.0f, 1.0f, bump / 0.25f);
-                        else
-                            bump = 1.0f - smoothStep(0.0f, 1.0f, (bump - 0.25f) / 0.25f);
-
-                        N += PortalToP * bump;
-                    } else {
-                        if (bump < 0.75f)
-                            bump = smoothStep(0.0f, 1.0f, (bump - 0.5f) / 0.25f);
-                        else
-                            bump = 1.0f - smoothStep(0.0f, 1.0f, (bump - 0.75f) / 0.25f);
-
-                        N -= PortalToP * bump;
-                    }
-                    N = N.normalized();
-                }
-            }
+            N = N.normalized();
         }
 
         if (normalNeeded) {
@@ -233,17 +241,16 @@ struct PixelShader {
             default: {
                 Ray ray;
                 Color light = Black;
-                Color flare = Black;
-                Color portal_glow = Black;
                 if (portal) {
-                    if (portal_distance_fraction > 0.5f)
+                    if (portal_distance_fraction > 0.4f)
                         pixel *= portal->color;
-                    else if (portal_distance_fraction > 0.4f)
-                        pixel *= Color(White).lerpTo(portal->color, smoothStep(0.0f, 1.0f, (portal_distance_fraction - 0.4f) / 0.1f));
-                    else if (portal_distance_fraction > 0.3f)
-                        portal_glow = 0.5f * portal->color.lerpTo(Color(Black), smoothStep(0.0f, 1.0f, (portal_distance_fraction - 0.3f) / 0.1f));
+                    else if (portal_distance_fraction > 0.3f) {
+                        if (!has_both_portals)
+                            pixel *= Color(White).lerpTo(portal->color, portal_blend_factor);
+                        additional_light = 0.5f * portal->color.lerpTo(Color(Black), smoothStep(0.0f, 1.0f, (portal_distance_fraction - 0.3f) / 0.1f));
+                    }
                     else if (portal_distance_fraction > 0.2f)
-                        portal_glow = 0.5f * Color(Black).lerpTo(portal->color, smoothStep(0.0f, 1.0f, (portal_distance_fraction - 0.2f) / 0.1f));
+                        additional_light = 0.5f * Color(Black).lerpTo(portal->color, smoothStep(0.0f, 1.0f, (portal_distance_fraction - 0.2f) / 0.1f));
                 }
 
                 brdf = (BRDFType)(render_state.flags & BRDF_MASK);
@@ -258,7 +265,7 @@ struct PixelShader {
                     if (render_state.flags & CAST_SHADOWS) {
                         vec2 L2d{L.x, L.z};
                         const f32 distance_2d_squared = L2d.squaredLength();
-                        ray.update(vec2{P.x, P.z}, L2d / sqrtf(distance_2d_squared));
+                        ray.update(vec2{P.x, P.z}, L2d / sqrtf(distance_2d_squared), ray.forward);
                         f32 closest_hit_distance = 1000000.0f;
                         for (u16 e = 0; e < (u16)edges.size; e++) {
                             if (ray.intersectsWithEdge(edges.data[e])) {
@@ -280,7 +287,6 @@ struct PixelShader {
                     f32 attenuation = 1.0f / L.squaredLength();
                     L *= sqrtf(attenuation);
 
-                    // if (i == 0) attenuation *= attenuation;
                     const f32 Li = point_light.intensity * attenuation;
                     NdotL = clampedValue(N.dot(L));
 
@@ -310,37 +316,107 @@ struct PixelShader {
 
                     if (i) {
                         const vec3 RoL = Ro - point_light.position;
-                        // if (!(edge_is == ABOVE || edge_is == BELOW)) V.y *= 0.5f;
                         const f32 distance = (V * V.dot(RoL) - RoL).length();
                         if (distance < settings.projectile_radius) {
                             f32 flare_intensity = 1.0f - ((distance) / (settings.projectile_radius));
 
-                            flare += point_light.color * (0.2f*point_light.intensity * powf(flare_intensity, 8));
+                            additional_light += point_light.color * (0.2f*point_light.intensity * powf(flare_intensity, 8));
                         }
                     }
                 }
 
                 pixel *= light + AO * 0.01f * render_state.lights[0].color;
-                pixel += flare + portal_glow;
             }
         }
 
         if (render_state.flags & EDITING_WALLS &&
-            ((i32)ray_hit_position.x == (i32)render_state.hovered_pos.x &&
-             (i32)ray_hit_position.y == (i32)render_state.hovered_pos.y) ||
+            ((i32)ground_hit_position.x == (i32)render_state.hovered_pos.x &&
+             (i32)ground_hit_position.y == (i32)render_state.hovered_pos.y) ||
             render_state.flags & EDITING_COLUMNS &&
-            (ray_hit_position - render_state.hovered_pos).squaredLength() < 0.01f) {
+            (ground_hit_position - render_state.hovered_pos).squaredLength() < 0.01f) {
             Color selection{-0.02f};
             if (render_state.flags & EDITING_WALLS)
                 selection.g = -selection.g;
             else
                 selection.r = -selection.r;
 
-            pixel += selection;
-            pixel.r = clampedValue(pixel.r, 0.0f, 1.0f);
-            pixel.g = clampedValue(pixel.g, 0.0f, 1.0f);
-            pixel.b = clampedValue(pixel.b, 0.0f, 1.0f);
+            additional_light += selection;
         }
+
+        return pixel;
+    }
+
+    INLINE_XPU Color shade(
+        const GroundHit& ground_hit,
+        const WallHit& wall_hit,
+        const Portal& portal_from,
+        const Portal& portal_to,
+        const Slice<TileEdge>& edges,
+        const Slice<Circle>& columns,
+        const vec2& position,
+        u16 y,
+        i32 mid_point,
+        const WallHit& portal_wall_hit,
+        const vec2 portal_origin) {
+
+        Color pixel = Magenta;
+        Color portal_pixel = Black;
+
+        if (!wall_hit.isValid() ||
+            !prepare(ground_hit, wall_hit, portal_from, portal_to, position, y, mid_point))
+            return pixel;
+
+        if (portal && has_both_portals && 0.3f < portal_distance_fraction) {
+            if (portal_wall_hit.isValid()) {
+                PixelShader secondary{settings, render_state};
+                Portal from, to;
+                from.init();
+                to.init();
+                if (secondary.prepare(ground_hit, portal_wall_hit, from, to, portal_origin, y, mid_point)) {
+                    Color additional_light;
+                    portal_pixel = secondary.render(portal_wall_hit, edges, columns, additional_light);
+                    blend_with_portal = portal_distance_fraction < 0.4f;
+                    if (blend_with_portal) {
+                        portal_blend_factor = smoothStep(0.0f, 1.0f, (portal_distance_fraction - 0.3f) / 0.1f);
+                        if (render_state.render_mode == RenderMode_Beauty)
+                            portal_pixel += additional_light;
+                    } else {
+                        if (render_state.render_mode == RenderMode_Beauty) {
+                            for (u8 i = 1; i < render_state.light_count; i++) {
+                                const PointLight& point_light{render_state.lights[i]};
+                                const vec3 RoL = Ro - point_light.position;
+                                V = (Ro - P).normalized();
+                                const f32 distance = (V * V.dot(RoL) - RoL).length();
+                                if (distance < settings.projectile_radius) {
+                                    f32 flare_intensity = 1.0f - ((distance) / (settings.projectile_radius));
+
+                                    additional_light += point_light.color * (0.2f*point_light.intensity * powf(flare_intensity, 8));
+                                }
+                            }
+                            portal_pixel += additional_light;
+                            portal_pixel.r = clampedValue(portal_pixel.r, 0.0f, 1.0f);
+                            portal_pixel.g = clampedValue(portal_pixel.g, 0.0f, 1.0f);
+                            portal_pixel.b = clampedValue(portal_pixel.b, 0.0f, 1.0f);
+                        }
+
+                        return portal_pixel;
+                    }
+                } else portal_pixel = Magenta;
+            } else portal_pixel = Magenta;
+        }
+
+        Color additional_light;
+        pixel = render(wall_hit, edges, columns, additional_light);
+
+        if (blend_with_portal)
+            pixel = pixel.lerpTo(portal_pixel, portal_blend_factor);
+
+        if (render_state.render_mode == RenderMode_Beauty)
+            pixel += additional_light;
+
+        pixel.r = clampedValue(pixel.r, 0.0f, 1.0f);
+        pixel.g = clampedValue(pixel.g, 0.0f, 1.0f);
+        pixel.b = clampedValue(pixel.b, 0.0f, 1.0f);
 
         return pixel;
     }

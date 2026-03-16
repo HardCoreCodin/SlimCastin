@@ -10,7 +10,7 @@ struct vec2i {
 
     INLINE_XPU vec2i() noexcept : vec2i{0} {}
     INLINE_XPU vec2i(i32 x, i32 y) noexcept : x(x), y(y) {}
-    INLINE_XPU vec2i(vec2i &other) noexcept : vec2i{other.x, other.y} {}
+    INLINE_XPU vec2i(const vec2i &other) noexcept : vec2i{other.x, other.y} {}
     INLINE_XPU explicit vec2i(i32 value) noexcept : vec2i{value, value} {}
 
     INLINE_XPU bool operator == (const vec2i &other) const {
@@ -610,6 +610,9 @@ struct vec2 {
             fast_mul_add(y, factors.y, to_be_added.y)
         };
     }
+
+    INLINE_XPU vec2 ccw90() { return {-y, x}; }
+    INLINE_XPU vec2 cw90() { return {y,-x}; }
 
     INLINE_XPU void shiftToNormalized() {
         x = fast_mul_add(x, 0.5f, 0.5f);

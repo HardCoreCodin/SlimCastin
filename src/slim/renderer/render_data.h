@@ -137,8 +137,8 @@ struct Portal {
     u16 edge_id;
     u8 edge_is;
 
-    void init() {
-        color = Black;
+    INLINE_XPU void init() {
+        color = 0.0f;
         position = vec3{0.0f};
         radius = 0.0f;
         edge_id = INVALID_EDGE_ID;
@@ -149,7 +149,6 @@ struct Portal {
 
 struct RenderState {
     PointLight lights[MAX_POINT_LIGHTS];
-    Portal portal_from, portal_to;
     RenderMode render_mode;
     u8 light_count;
     u8 flags;
@@ -163,9 +162,6 @@ struct RenderState {
         render_mode = RAY_CASTER_DEFAULT_SETTINGS_RENDER_MODE;
         hovered_pos = 0.0f;
         light_count = 1;
-
-        portal_from.init();
-        portal_to.init();
     }
 };
 
@@ -216,22 +212,8 @@ struct RayHit {
                edge_id != INVALID_EDGE_ID;
     }
 
-    INLINE_XPU void finalize(const vec2 ray_origin, const vec2 ray_direction, const vec2 forward, const TileEdge *edges, const Circle* columns) {
-        if (column_id != INVALID_COLUMN_ID) {
-            position = ray_direction * distance;
-            perp_distance = forward.dot(position);
-            position += ray_origin;
-            tile_coords.x = (i32)position.x;
-            tile_coords.y = (i32)position.y;
-            texture_u = getU(position - columns[column_id].position);
-            texture_u *= columns[column_id].radius;
-            texture_id = 12;
-            edge_is = 0;
-            return;
-        }
-
-        // edge_is = edges[edge_id].is;
-        texture_id = edges[edge_id].texture_id;
+    INLINE_XPU void finalizeFromEdge(const TileEdge& edge, const vec2 ray_origin, const vec2 forward) {
+        texture_id = edge.texture_id;
 
         perp_distance = forward.dot(position - ray_origin);
 
@@ -239,11 +221,25 @@ struct RayHit {
         tile_coords.y = edge_is & FACING_DOWN  ? (i32)position.y - 1 : (i32)position.y;
 
         texture_u = edge_is & (FACING_LEFT | FACING_RIGHT) ?
-            position.y - (f32)edges[edge_id].from.y :
-            position.x - (f32)edges[edge_id].from.x;
+            position.y - (f32)edge.from.y :
+            position.x - (f32)edge.from.x;
+
         texture_u -= (f32)(i32)texture_u;
+
         if (edge_is & (FACING_RIGHT | FACING_UP))
             texture_u = 1.0f - texture_u;
+    }
+
+    INLINE_XPU void finalizeFromColumn(const Circle& column, const vec2 ray_origin, const vec2 ray_direction, const vec2 forward) {
+        position = ray_direction * distance;
+        perp_distance = forward.dot(position);
+        position += ray_origin;
+        tile_coords.x = (i32)position.x;
+        tile_coords.y = (i32)position.y;
+        texture_u = getU(position - column.position);
+        texture_u *= column.radius;
+        texture_id = 12;
+        edge_is = 0;
     }
 };
 
@@ -256,7 +252,7 @@ struct GroundHit {
 struct WallHit {
     vec2 ray_direction, hit_position, hit_normal;
     f32 u, v, texel_step;
-    u16 top, bot;
+    u16 top, bot, edge_id;
     u8 texture_id;
     u8 mip;
     u8 edge_is;
@@ -294,10 +290,17 @@ struct WallHit {
             bot = screen_height - 1;
 
         edge_is = ray_hit.edge_is;
-        hit_position = ray_hit.position;
+        edge_id = ray_hit.edge_id;
         column_id = ray_hit.column_id;
+        hit_position = ray_hit.position;
         if (column_id != INVALID_COLUMN_ID) {
             hit_normal = (hit_position - columns[column_id].position).normalized();
         }
     }
+};
+
+struct WallHitGroup {
+    WallHit main;
+    WallHit portal;
+    vec2 portal_origin;
 };

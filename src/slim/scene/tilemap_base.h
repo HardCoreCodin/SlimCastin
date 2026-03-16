@@ -1,6 +1,5 @@
 #pragma once
 
-#include "tilemap.h"
 #include "../math/vec2.h"
 
 
@@ -44,10 +43,6 @@ struct Circle {
 struct TileEdge {
     vec2i from{};
     vec2i to{};
-    // i32 length = 0;
-    // i32 portal_ray_rotation = 0;
-    // TileEdge* portal_to;
-    // bool portal_edge_dir_flip;
     u8 texture_id = 0;
     u8 is = 0;
 
@@ -69,5 +64,19 @@ struct TileEdge {
             is_visible = 0;
 
         return is_visible;
+    }
+
+    bool overlaps(const TileEdge& other) const {
+        if (other.is != is)
+            return false;
+
+        if (is & (FACING_LEFT | FACING_RIGHT)) {
+            if (from.x > other.to.x || other.from.x > to.x)
+                return false;
+        } else {
+            if (from.y > other.to.y || other.from.y > to.y)
+                return false;
+        }
+        return true;
     }
 };
