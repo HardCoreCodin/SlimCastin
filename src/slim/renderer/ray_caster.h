@@ -184,12 +184,12 @@ struct RayCaster {
         if (ray.hit.edge_id == portal_from.edge_id && fabsf(
             (portal_from.edge_is & (FACING_DOWN | FACING_UP)) ?
             (portal_from.position.x - ray.hit.position.x) :
-            (portal_from.position.z - ray.hit.position.y)) < FINAL_PORTAL_RADIUS)
+            (portal_from.position.z - ray.hit.position.y)) < PORTAL_FINAL_RADIUS)
             portal = &portal_from;
         if (portal == nullptr && ray.hit.edge_id == portal_to.edge_id && fabsf(
             (portal_to.edge_is & (FACING_DOWN | FACING_UP)) ?
             (portal_to.position.x - ray.hit.position.x) :
-            (portal_to.position.z - ray.hit.position.y)) < FINAL_PORTAL_RADIUS)
+            (portal_to.position.z - ray.hit.position.y)) < PORTAL_FINAL_RADIUS)
             portal = &portal_to;
 
         if (portal == nullptr)
@@ -198,26 +198,7 @@ struct RayCaster {
         const Portal& other_portal{portal == &portal_from ? portal_to : portal_from};
         const vec2 other_portal_position{other_portal.position.x, other_portal.position.z};
 
-        i32 ray_rotation = 0;
-        const u8 from_edge_is = portal->edge_is;
-        const u8 to_edge_is = other_portal.edge_is;
-        if (from_edge_is & (FACING_LEFT | FACING_RIGHT)) {
-            if (to_edge_is & (FACING_DOWN | FACING_UP)) {
-            	if (from_edge_is & FACING_RIGHT)
-            	    ray_rotation = (to_edge_is & FACING_UP) ? 90 : -90;
-            	else
-            	    ray_rotation = (to_edge_is & FACING_DOWN) ? 90 : -90;
-            } else if ((from_edge_is & FACING_RIGHT) == (to_edge_is & FACING_RIGHT))
-                ray_rotation = 180;
-        } else
-            if (to_edge_is & (FACING_LEFT | FACING_RIGHT)) {
-            	if (from_edge_is & FACING_UP)
-            	    ray_rotation = (to_edge_is & FACING_LEFT) ? 90 : -90;
-            	else
-                    ray_rotation = (to_edge_is & FACING_RIGHT) ? 90 : -90;
-            } else
-                if ((from_edge_is & FACING_UP) == (to_edge_is & FACING_UP))
-                    ray_rotation = 180;
+        i32 ray_rotation = portal->getRotation(other_portal.edge_is);
 
         vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - position;
         vec2 origin_to_hit_position = ray.hit.position - position;

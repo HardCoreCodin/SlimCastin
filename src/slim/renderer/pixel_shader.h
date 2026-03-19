@@ -124,7 +124,7 @@ struct PixelShader {
 
             if (portal_from.edge_id == wall_hit.edge_id) {
                 portal = &portal_from;
-                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - portal->position;
+                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - vec3{portal->position.x, portal->position.y*0.5f, portal->position.z};
                 portal_distance_fraction = PortalToP.squaredLength();
                 if (portal_distance_fraction > (portal->radius * portal->radius))
                     portal = nullptr;
@@ -132,7 +132,7 @@ struct PixelShader {
 
             if (portal == nullptr && portal_to.edge_id == wall_hit.edge_id) {
                 portal = &portal_to;
-                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - portal->position;
+                PortalToP = vec3{P.x, P.y * 0.5f, P.z} - vec3{portal->position.x, portal->position.y * 0.5f, portal->position.z};
                 portal_distance_fraction = PortalToP.squaredLength();
                 if (portal_distance_fraction > (portal->radius * portal->radius))
                     portal = nullptr;

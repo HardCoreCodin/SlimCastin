@@ -27,9 +27,14 @@ INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start &
 
 #define MAX_POINT_LIGHTS 16
 
-#define INITIAL_PORTAL_RADIUS 0.1f
-#define FINAL_PORTAL_RADIUS 0.4f
+#define PORTAL_FINAL_RADIUS 0.4f
+#define PORTAL_INITIAL_RADIUS 0.1f
+#define PORTAL_BREATHING_RANGE 0.04f
 #define PORTAL_GROW_TIME 1.5f
+#define PORTAL_GROW_RATE (1.0f / PORTAL_GROW_TIME)
+#define PORTAL_GROW_RANGE (PORTAL_FINAL_RADIUS - PORTAL_INITIAL_RADIUS)
+#define PORTAL_GROW_RADIUS (PORTAL_INITIAL_RADIUS + PORTAL_BREATHING_RANGE)
+#define PORTAL_MAX_RADIUS (PORTAL_FINAL_RADIUS + PORTAL_BREATHING_RANGE)
 
 
 enum FilterMode {
@@ -143,6 +148,29 @@ struct Portal {
         radius = 0.0f;
         edge_id = INVALID_EDGE_ID;
         edge_is = 0;
+    }
+
+    INLINE_XPU f32 getRotation(u8 to_edge_is) const {
+        i32 ray_rotation = 0;
+        if (edge_is & (FACING_LEFT | FACING_RIGHT)) {
+            if (to_edge_is & (FACING_DOWN | FACING_UP)) {
+                if (edge_is & FACING_RIGHT)
+                    ray_rotation = (to_edge_is & FACING_UP) ? 90 : -90;
+                else
+                    ray_rotation = (to_edge_is & FACING_DOWN) ? 90 : -90;
+            } else if ((edge_is & FACING_RIGHT) == (to_edge_is & FACING_RIGHT))
+                ray_rotation = 180;
+        } else
+            if (to_edge_is & (FACING_LEFT | FACING_RIGHT)) {
+                if (edge_is & FACING_UP)
+                    ray_rotation = (to_edge_is & FACING_LEFT) ? 90 : -90;
+                else
+                    ray_rotation = (to_edge_is & FACING_RIGHT) ? 90 : -90;
+            } else
+                if ((edge_is & FACING_UP) == (to_edge_is & FACING_UP))
+                    ray_rotation = 180;
+
+        return ray_rotation;
     }
 };
 
