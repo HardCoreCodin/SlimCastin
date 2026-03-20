@@ -222,7 +222,7 @@ struct RayCaster {
 
         f32 prior_distance = ray.hit.distance;
         wall_hit_group.portal_origin = other_portal_position - origin_to_portal;
-        ray.update( wall_hit_group.portal_origin + origin_to_hit_position * (1.0001f), ray_direction, ray_forward);
+        ray.update( wall_hit_group.portal_origin + origin_to_hit_position, ray_direction, ray_forward);
         generateWallHit(wall_hit_group.portal, edges, columns);
         if (ray.hit.isValid()) {
             ray.hit.distance  = sqrt(ray.hit.distance) + prior_distance;

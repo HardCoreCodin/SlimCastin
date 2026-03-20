@@ -150,7 +150,7 @@ struct Portal {
         edge_is = 0;
     }
 
-    INLINE_XPU f32 getRotation(u8 to_edge_is) const {
+    INLINE_XPU i32 getRotation(u8 to_edge_is) const {
         i32 ray_rotation = 0;
         if (edge_is & (FACING_LEFT | FACING_RIGHT)) {
             if (to_edge_is & (FACING_DOWN | FACING_UP)) {
@@ -177,6 +177,8 @@ struct Portal {
 
 struct RenderState {
     PointLight lights[MAX_POINT_LIGHTS];
+    vec3 lights_through_portal_from[MAX_POINT_LIGHTS];
+    vec3 lights_through_portal_to[MAX_POINT_LIGHTS];
     RenderMode render_mode;
     u8 light_count;
     u8 flags;
@@ -243,7 +245,7 @@ struct RayHit {
     INLINE_XPU void finalizeFromEdge(const TileEdge& edge, const vec2 ray_origin, const vec2 forward) {
         texture_id = edge.texture_id;
 
-        perp_distance = forward.dot(position - ray_origin);
+        perp_distance = fmaxf(0.001f, forward.dot(position - ray_origin));
 
         tile_coords.x = edge_is & FACING_RIGHT ? (i32)position.x - 1 : (i32)position.x;
         tile_coords.y = edge_is & FACING_DOWN  ? (i32)position.y - 1 : (i32)position.y;
@@ -260,7 +262,7 @@ struct RayHit {
 
     INLINE_XPU void finalizeFromColumn(const Circle& column, const vec2 ray_origin, const vec2 ray_direction, const vec2 forward) {
         position = ray_direction * distance;
-        perp_distance = forward.dot(position);
+        perp_distance = fmaxf(0.001f, forward.dot(position));
         position += ray_origin;
         tile_coords.x = (i32)position.x;
         tile_coords.y = (i32)position.y;
@@ -301,21 +303,19 @@ struct WallHit {
         u = ray_hit.texture_u;
         v = 0.0f;
 
-        u16 height = (u16)(column_height_factor / ray_hit.perp_distance);
-        u16 half_height = height >> 1;
-        height = half_height << 1;
+        f32 height = column_height_factor / ray_hit.perp_distance;
+        f32 half_height = height * 0.5f;
         mip = computeMip(ray_hit.perp_distance * pixel_coverage_factor, texel_size, last_mip);
-        texel_step = 1.0f / (f32)height;
-        bot = (u16)mid_point + half_height;
+        texel_step = 1.0f / height;
+        i32 ibot = mid_point + (i32)half_height;
+        bot = ibot >= (i32)screen_height ? (screen_height - 1) : (u16)ibot;
 
         if (mid_point < half_height) {
-            v = (f32)(half_height - mid_point) / (f32)height;
+            v = (half_height - mid_point) / height;
             top    = 0;
         }
-        else top = (u16)mid_point - half_height;
-
-        if (bot >= screen_height)
-            bot = screen_height - 1;
+        else
+            top = (u16)(mid_point - half_height);
 
         edge_is = ray_hit.edge_is;
         edge_id = ray_hit.edge_id;

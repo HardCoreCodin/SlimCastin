@@ -495,7 +495,6 @@ struct Orientation : T {
         x = y = z = 0.0f;
     }
 
-protected:
     f32 x = 0.0f, y = 0.0f, z = 0.0f;
 
     INLINE_XPU void _update() {

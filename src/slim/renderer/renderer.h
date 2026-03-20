@@ -159,16 +159,7 @@ namespace ray_cast_renderer {
         addLightProjectile(time, portal_to.color);
     }
 
-    void update(const f32 time, const f32 delta_time, const TileMap& tile_map) {
-        if (ray_caster.portal_from.edge_id != INVALID_EDGE_ID)
-            portal_from.update(ray_caster.portal_from, time, tile_map.edges.data);
-
-        if (ray_caster.portal_to.edge_id != INVALID_EDGE_ID)
-            portal_to.update(ray_caster.portal_to, time, tile_map.edges.data);
-
-        if (projectile_count == 0)
-            return;
-
+    void updateProjectiles(const f32 time, const f32 delta_time, const TileMap& tile_map) {
         bool need_generate_wall_hits = false;
         const vec2 start = 1.0f;
         const vec2 end = {
@@ -232,62 +223,58 @@ namespace ray_cast_renderer {
 
                         if (other_portal.edge_id != INVALID_EDGE_ID)
                             need_generate_wall_hits = true;
-                    }
-                } else if (closest_hit_edge_id != INVALID_EDGE_ID) {
-                    Portal* portal = nullptr;
-                    if (ray_caster.portal_from.edge_id == closest_hit_edge_id) {
-                        portal = &ray_caster.portal_from;
-                        const vec3 PortalToP =
-                            vec3{new_projectile_position.x, new_projectile_position.y * 0.5f, new_projectile_position.z} -
-                            vec3{portal->position.x, portal->position.y * 0.5f, portal->position.z};
-                        if (PortalToP.squaredLength() > (portal->radius * portal->radius))
-                            portal = nullptr;
-                    }
-                    if (portal == nullptr && ray_caster.portal_to.edge_id == closest_hit_edge_id) {
-                        portal = &ray_caster.portal_to;
-                        const vec3 PortalToP =
-                            vec3{new_projectile_position.x, new_projectile_position.y * 0.5f, new_projectile_position.z} -
+                        }
+                    } else if (closest_hit_edge_id != INVALID_EDGE_ID) {
+                        Portal* portal = nullptr;
+                        if (ray_caster.portal_from.edge_id == closest_hit_edge_id) {
+                            portal = &ray_caster.portal_from;
+                            const vec3 PortalToP =
+                                vec3{new_projectile_position.x, new_projectile_position.y * 0.5f, new_projectile_position.z} -
                                 vec3{portal->position.x, portal->position.y * 0.5f, portal->position.z};
-                        if (PortalToP.squaredLength() > (portal->radius * portal->radius))
-                            portal = nullptr;
-                    }
+                            if (PortalToP.squaredLength() > (portal->radius * portal->radius))
+                                portal = nullptr;
+                        }
+                        if (portal == nullptr && ray_caster.portal_to.edge_id == closest_hit_edge_id) {
+                            portal = &ray_caster.portal_to;
+                            const vec3 PortalToP =
+                                vec3{new_projectile_position.x, new_projectile_position.y * 0.5f, new_projectile_position.z} -
+                                    vec3{portal->position.x, portal->position.y * 0.5f, portal->position.z};
+                            if (PortalToP.squaredLength() > (portal->radius * portal->radius))
+                                portal = nullptr;
+                        }
 
-                    if (portal) {
-                        Portal* other_portal{portal == &ray_caster.portal_from ? &ray_caster.portal_to : &ray_caster.portal_from};
-                        if (other_portal->edge_id != INVALID_EDGE_ID) {
-                            i32 ray_rotation = portal->getRotation(other_portal->edge_is);
+                        if (portal) {
+                            Portal* other_portal{portal == &ray_caster.portal_from ? &ray_caster.portal_to : &ray_caster.portal_from};
+                            if (other_portal->edge_id != INVALID_EDGE_ID) {
+                                i32 ray_rotation = portal->getRotation(other_portal->edge_is);
 
-                            vec2 origin{projectile_position.x, projectile_position.z};
-                            vec2 origin_to_hit_position = {projectile_to_edge.x, projectile_to_edge.z};
-                            vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - origin;
-                            vec2 forward{projectile.forward.x, projectile.forward.z};
-                            if (ray_rotation == 90) {
-                                origin_to_hit_position = origin_to_hit_position.ccw90();
-                                origin_to_portal = origin_to_portal.ccw90();
-                                ray_direction_2d = ray_direction_2d.ccw90();
-                                forward = forward.ccw90();
-                            } else if (ray_rotation == -90) {
-                                origin_to_hit_position = origin_to_hit_position.cw90();
-                                origin_to_portal = origin_to_portal.cw90();
-                                ray_direction_2d = ray_direction_2d.cw90();
-                                forward = forward.cw90();
-                            } else if (ray_rotation == 180) {
-                                origin_to_hit_position = -origin_to_hit_position;
-                                origin_to_portal = -origin_to_portal;
-                                ray_direction_2d = -ray_direction_2d;
-                                forward = -forward;
+                                vec2 origin{projectile_position.x, projectile_position.z};
+                                vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - origin;
+                                vec2 forward{projectile.forward.x, projectile.forward.z};
+                                if (ray_rotation == 90) {
+                                    origin_to_portal = origin_to_portal.ccw90();
+                                    ray_direction_2d = ray_direction_2d.ccw90();
+                                    forward = forward.ccw90();
+                                } else if (ray_rotation == -90) {
+                                    origin_to_portal = origin_to_portal.cw90();
+                                    ray_direction_2d = ray_direction_2d.cw90();
+                                    forward = forward.cw90();
+                                } else if (ray_rotation == 180) {
+                                    origin_to_portal = -origin_to_portal;
+                                    ray_direction_2d = -ray_direction_2d;
+                                    forward = -forward;
+                                }
+                                const vec2 other_portal_origin = vec2{other_portal->position.x, other_portal->position.z} - origin_to_portal;
+                                const vec2 target = other_portal_origin + ray_direction_2d;
+                                projectile.position.x = target.x;
+                                projectile.position.z = target.y;
+                                projectile.forward.x = forward.x;
+                                projectile.forward.z = forward.y;
+                                remove = false;
+                                teleported = true;
                             }
-                            const vec2 other_portal_origin = vec2{other_portal->position.x, other_portal->position.z} - origin_to_portal;
-                            const vec2 target = other_portal_origin + ray_direction_2d;
-                            projectile.position.x = target.x;
-                            projectile.position.z = target.y;
-                            projectile.forward.x = forward.x;
-                            projectile.forward.z = forward.y;
-                            remove = false;
-                            teleported = true;
                         }
                     }
-                }
             }
             if (!remove && !teleported) {
                 for (u8 c = 0; c < tile_map.columns.size; c++) {
@@ -311,7 +298,7 @@ namespace ray_cast_renderer {
                     if (need_generate_wall_hits)
                         generateWallHits(tile_map);
 
-                    return;
+                    break;
                 }
 
                 if (portal_from.projectile_index == projectile_count)
@@ -339,48 +326,55 @@ namespace ray_cast_renderer {
             generateWallHits(tile_map);
     }
 
-    void onMove(Camera& camera, TileMap& tile_map) {
-        vec2 position = vec2(camera.position.x, camera.position.z);
-        vec2 movement = position - ray_caster.position;
+    void update(const f32 time, const f32 delta_time, const TileMap& tile_map) {
+        if (ray_caster.portal_from.edge_id != INVALID_EDGE_ID)
+            portal_from.update(ray_caster.portal_from, time, tile_map.edges.data);
 
-        if (movement.x > 0.0f) {
-            i32 next_pos = (i32)(position.x + settings->body_radius);
-            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
-            if (next_tile.is_full) position.x = (f32)next_pos - settings->body_radius;
-        } else if (movement.x < 0.0f) {
-            i32 next_pos = (i32)(position.x - settings->body_radius);
-            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
-            if (next_tile.is_full) position.x = (f32)(next_pos + 1) + settings->body_radius;
+        if (ray_caster.portal_to.edge_id != INVALID_EDGE_ID)
+            portal_to.update(ray_caster.portal_to, time, tile_map.edges.data);
+
+        if (projectile_count > 0)
+            updateProjectiles(time, delta_time, tile_map);
+
+        if (ray_caster.portal_from.edge_id != INVALID_EDGE_ID &&
+            ray_caster.portal_to.edge_id != INVALID_EDGE_ID) {
+            for (u8 i = 0; i < render_state.light_count; i++) {
+                vec2 light_position{render_state.lights[i].position.x, render_state.lights[i].position.z};
+
+                i32 ray_rotation = ray_caster.portal_from.getRotation(ray_caster.portal_to.edge_is);
+                vec2 origin_to_portal = vec2{ray_caster.portal_from.position.x, ray_caster.portal_from.position.z} - light_position;
+                if (ray_rotation == 90) {
+                    origin_to_portal = origin_to_portal.ccw90();
+                } else if (ray_rotation == -90) {
+                    origin_to_portal = origin_to_portal.cw90();
+                } else if (ray_rotation == 180) {
+                    origin_to_portal = -origin_to_portal;
+                }
+                vec2 target = vec2{ray_caster.portal_to.position.x, ray_caster.portal_to.position.z} - origin_to_portal;
+                render_state.lights_through_portal_from[i].x = target.x;
+                render_state.lights_through_portal_from[i].z = target.y;
+                render_state.lights_through_portal_from[i].y = render_state.lights[i].position.y;
+
+                ray_rotation = ray_caster.portal_to.getRotation(ray_caster.portal_from.edge_is);
+                origin_to_portal = vec2{ray_caster.portal_to.position.x, ray_caster.portal_to.position.z} - light_position;
+                if (ray_rotation == 90) {
+                    origin_to_portal = origin_to_portal.ccw90();
+                } else if (ray_rotation == -90) {
+                    origin_to_portal = origin_to_portal.cw90();
+                } else if (ray_rotation == 180) {
+                    origin_to_portal = -origin_to_portal;
+                }
+                target = vec2{ray_caster.portal_from.position.x, ray_caster.portal_from.position.z} - origin_to_portal;
+                render_state.lights_through_portal_to[i].x = target.x;
+                render_state.lights_through_portal_to[i].z = target.y;
+                render_state.lights_through_portal_to[i].y = render_state.lights[i].position.y;
+            }
         }
-
-        if (movement.y < 0.0f) {
-            i32 next_pos = (i32)(position.y - settings->body_radius);
-            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
-            if (next_tile.is_full) position.y = (f32)(next_pos + 1) + settings->body_radius;
-        } else if (movement.y > 0.0f) {
-            i32 next_pos = (i32)(position.y + settings->body_radius);
-            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
-            if (next_tile.is_full) position.y = (f32)next_pos - settings->body_radius;
-        }
-
-        for (u32 i = 0; i < tile_map.columns.size; i++) {
-            const Circle& column{tile_map.columns.data[i]};
-
-            vec2 vector_to_column = column.position - position;
-            f32 distance_to_column = vector_to_column.length();
-            f32 min_distance_allowed = settings->body_radius + column.radius;
-            if (distance_to_column < min_distance_allowed)
-                position -= (vector_to_column / distance_to_column) * (min_distance_allowed - distance_to_column);
-        }
-
-        camera.position.x = position.x;
-        camera.position.z = position.y;
-        ray_caster.position = position;
     }
 
     void onScreenChanged(const Camera& camera, const TileMap& tile_map) {
-        vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z);
-        vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z);
+        vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z).normalized();
+        vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z).normalized();
         ray_caster.onScreenChanged(camera.focal_length, forward, right, camera.orientation.Z.y);
         generateWallHits(tile_map);
         if (prior_screen_height != ray_caster.screen_height ||
@@ -388,6 +382,135 @@ namespace ray_cast_renderer {
             generateFloorAndCeilingHits();
 
         prior_up_aim = ray_caster.up_aim;
+    }
+
+    void onMove(Camera& camera, TileMap& tile_map) {
+        vec2 position = vec2(camera.position.x, camera.position.z);
+        vec2 movement = position - ray_caster.position;
+
+        bool teleport = false;
+        Portal* portal = nullptr;
+        if (ray_caster.portal_from.edge_id != INVALID_EDGE_ID &&
+            ray_caster.portal_to.edge_id != INVALID_EDGE_ID) {
+            Ray ray;
+
+            ray.update(ray_caster.position, movement, ray_caster.forward);
+            f32 hit_distance = 1000000.0f;
+            u16 closest_hit_edge_id = INVALID_EDGE_ID;
+            u8 closest_hit_edge_is = 0;
+            for (u16 edge_id = 0; edge_id < (u16)tile_map.edges.size; edge_id++) {
+                if (ray.intersectsWithEdge(tile_map.edges.data[edge_id])) {
+                    ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
+                    if (ray.hit.distance < hit_distance) {
+                        hit_distance = ray.hit.distance;
+                        closest_hit_edge_id = edge_id;
+                        closest_hit_edge_is = ray.hit.edge_is;
+                    }
+                }
+            }
+
+            if (ray_caster.portal_from.edge_id == closest_hit_edge_id) {
+                portal = &ray_caster.portal_from;
+                vec2 PortalToP = position - vec2{portal->position.x, portal->position.z};
+                if (PortalToP.squaredLength() > (portal->radius * portal->radius))
+                    portal = nullptr;
+            }
+            if (portal == nullptr && ray_caster.portal_to.edge_id == closest_hit_edge_id) {
+                portal = &ray_caster.portal_to;
+                vec2 PortalToP = position - vec2{portal->position.x, portal->position.z};
+                if (PortalToP.squaredLength() > (portal->radius * portal->radius))
+                    portal = nullptr;
+            }
+
+            if (portal) {
+                const vec2 new_position = position + movement;
+                if (closest_hit_edge_is & (FACING_UP | FACING_DOWN))
+                    teleport = new_position.y > portal->position.z != position.y > portal->position.z;
+                else
+                    teleport = new_position.x > portal->position.x != position.x > portal->position.x;
+            }
+        }
+
+        if (teleport) {
+            Portal *other_portal{
+                portal == &ray_caster.portal_from ? &ray_caster.portal_to : &ray_caster.portal_from
+            };
+
+            i32 ray_rotation = portal->getRotation(other_portal->edge_is);
+
+            vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - ray_caster.position;
+
+            vec2 up = vec2(camera.orientation.Y.x, camera.orientation.Y.z);
+            vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z);
+            vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z);
+            if (ray_rotation == 90) {
+                origin_to_portal = origin_to_portal.ccw90();
+                movement = movement.ccw90();
+                up = up.ccw90();
+                right = right.ccw90();
+                forward = forward.ccw90();
+                camera.orientation.y += DEG_TO_RAD * 90;
+            } else if (ray_rotation == -90) {
+                origin_to_portal = origin_to_portal.cw90();
+                movement = movement.cw90();
+                up = up.cw90();
+                right = right.cw90();
+                forward = forward.cw90();
+                camera.orientation.y -= DEG_TO_RAD * 90;
+            } else if (ray_rotation == 180) {
+                origin_to_portal = -origin_to_portal;
+                movement = -movement;
+                up = -up;
+                right = -right;
+                forward = -forward;
+                camera.orientation.y += DEG_TO_RAD * 180;
+            }
+            const vec2 other_portal_origin = vec2{other_portal->position.x, other_portal->position.z} - origin_to_portal;
+            position = other_portal_origin + movement;
+
+            camera.orientation.X.x = right.x;
+            camera.orientation.X.z = right.y;
+            camera.orientation.Y.x = up.x;
+            camera.orientation.Y.z = up.y;
+            camera.orientation.Z.x = -forward.x;
+            camera.orientation.Z.z = -forward.y;
+        } else if (!portal) {
+            if (movement.x > 0.0f) {
+                i32 next_pos = (i32)(position.x + settings->body_radius);
+                const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+                if (next_tile.is_full) position.x = (f32)next_pos - settings->body_radius;
+            } else if (movement.x < 0.0f) {
+                i32 next_pos = (i32)(position.x - settings->body_radius);
+                const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+                if (next_tile.is_full) position.x = (f32)(next_pos + 1) + settings->body_radius;
+            }
+
+            if (movement.y < 0.0f) {
+                i32 next_pos = (i32)(position.y - settings->body_radius);
+                const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+                if (next_tile.is_full) position.y = (f32)(next_pos + 1) + settings->body_radius;
+            } else if (movement.y > 0.0f) {
+                i32 next_pos = (i32)(position.y + settings->body_radius);
+                const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+                if (next_tile.is_full) position.y = (f32)next_pos - settings->body_radius;
+            }
+
+            for (u32 i = 0; i < tile_map.columns.size; i++) {
+                const Circle& column{tile_map.columns.data[i]};
+
+                vec2 vector_to_column = column.position - position;
+                f32 distance_to_column = vector_to_column.length();
+                f32 min_distance_allowed = settings->body_radius + column.radius;
+                if (distance_to_column < min_distance_allowed)
+                    position -= (vector_to_column / distance_to_column) * (min_distance_allowed - distance_to_column);
+            }
+        }
+
+        camera.position.x = position.x;
+        camera.position.z = position.y;
+        ray_caster.position = position;
+        if (teleport)
+            onScreenChanged(camera, tile_map);
     }
 
     void onResize(u16 width, u16 height, const Camera& camera, const TileMap& tile_map) {
