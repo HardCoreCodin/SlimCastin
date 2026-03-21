@@ -53,7 +53,7 @@ INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 NdotH) {
 }
 
 struct PixelShader {
-    const RayCasterSettings& settings;
+    const RenderData& render_data;
     const RenderState& render_state;
 
     const Portal* portal;
@@ -79,8 +79,8 @@ struct PixelShader {
             const bool is_ceiling = y < mid_point;
             const vec2 start = 1.0f;
             const vec2 end = {
-                (f32)(settings.tile_map_width - 1),
-                (f32)(settings.tile_map_height - 1)
+                (f32)(render_data.map_width - 1),
+                (f32)(render_data.map_height - 1)
             };
             if (!inRange(start, ground_hit_position, end))
                 return false;
@@ -89,7 +89,7 @@ struct PixelShader {
             v = ground_hit_position.y - (f32)(i32)ground_hit_position.y;
             u = ground_hit_position.x - (f32)(i32)ground_hit_position.x;
             edge_is = is_ceiling ? ABOVE : BELOW;
-            texture_id = is_ceiling ? settings.ceiling_texture_id : settings.floor_texture_id;
+            texture_id = is_ceiling ? render_data.ceiling_texture_id : render_data.floor_texture_id;
             Ro.x = position.x;
             Ro.z = position.y;
             Ro.y = 0.0f;
@@ -162,7 +162,7 @@ struct PixelShader {
         Color pixel = Magenta;
         if (render_state.render_mode == RenderMode_Beauty ||
             render_state.render_mode == RenderMode_Color)
-            pixel = settings.textures[texture_id].mips[mip_level].sampleColor(u, v);
+            pixel = render_data.textures[texture_id].mips[mip_level].sampleColor(u, v);
         else if (render_state.render_mode == RenderMode_Light)
             pixel = White;
 
@@ -171,14 +171,14 @@ struct PixelShader {
             (render_state.render_mode == RenderMode_Roughness ||
              render_state.render_mode == RenderMode_Beauty ||
              render_state.render_mode == RenderMode_Light)) {
-            roughness = settings.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
+            roughness = render_data.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
         }
         N = {0.0f, 0.0f, 1.0f};
         const bool normalNeeded = render_state.render_mode == RenderMode_Beauty ||
                                   render_state.render_mode == RenderMode_Normal ||
                                   render_state.render_mode == RenderMode_Light;
         if (normalNeeded && (render_state.flags & USE_NORMAL_MAP))
-            N = vec3{settings.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
+            N = vec3{render_data.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
 
         if (portal && normalNeeded && portal_distance_fraction < ((0.4f * (3.0f / 4.0f)))) {
             if      (edge_is & FACING_DOWN ) PortalToP = {  PortalToP.x,  PortalToP.y, 1.0f - sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y)};
@@ -225,7 +225,7 @@ struct PixelShader {
             (render_state.render_mode == RenderMode_AO ||
              render_state.render_mode == RenderMode_Beauty ||
              render_state.render_mode == RenderMode_Light)) {
-            AO = settings.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
+            AO = render_data.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
             AO *= AO;
             AO *= AO;
         }
@@ -236,14 +236,30 @@ struct PixelShader {
             case RenderMode_UVs: pixel = Color(u, v, 0); break;
             case RenderMode_Depth: pixel = 1.0f / (Ro - P).length(); break;
             case RenderMode_Normal: pixel = N.scaleAdd(0.5, 0.5f).asColor(); break;
-            case RenderMode_MipLevel: pixel = Color(settings.mip_level_colors[mip_level]); break;
             case RenderMode_Roughness: pixel = roughness; break;
+            case RenderMode_MipLevel: {
+                ColorID colorId;
+                switch (mip_level) {
+                    case 0: colorId = MIP_LEVEL_0_COLOR; break;
+                    case 1: colorId = MIP_LEVEL_1_COLOR; break;
+                    case 2: colorId = MIP_LEVEL_2_COLOR; break;
+                    case 3: colorId = MIP_LEVEL_3_COLOR; break;
+                    case 4: colorId = MIP_LEVEL_4_COLOR; break;
+                    case 5: colorId = MIP_LEVEL_5_COLOR; break;
+                    case 6: colorId = MIP_LEVEL_6_COLOR; break;
+                    case 7: colorId = MIP_LEVEL_7_COLOR; break;
+                    case 8: colorId = MIP_LEVEL_8_COLOR; break;
+                    default: colorId = Magenta; break;
+                }
+                pixel = Color(colorId);
+                break;
+            }
             case RenderMode_Untextured: pixel = Color(
                 edge_is == ABOVE ?
-                    settings.untextured_ceiling_color :
+                    UNTEXTURED_CEILING_COLOR :
                     (edge_is == BELOW ?
-                        settings.untextured_floor_color :
-                        settings.untextured_wall_color)); break;
+                        UNTEXTURED_FLOOR_COLOR :
+                        UNTEXTURED_WALL_COLOR)); break;
             default: {
                 Ray ray;
                 Color light = Black;
@@ -352,8 +368,8 @@ struct PixelShader {
                             const vec3 RoL = Ro - point_light.position;
                             if (RoL.dot(V) > 0.0f) {
                                 f32 distance = (V * V.dot(RoL) - RoL).squaredLength();
-                                if (distance < (settings.projectile_radius * settings.projectile_radius)) {
-                                    f32 flare_intensity = (settings.projectile_radius - sqrtf(distance)) / settings.projectile_radius;
+                                if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
+                                    f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
                                     flare_intensity *= flare_intensity;
                                     flare_intensity *= flare_intensity;
                                     flare_intensity *= flare_intensity;
@@ -411,7 +427,7 @@ struct PixelShader {
 
         if (portal && has_both_portals && 0.3f < portal_distance_fraction) {
             if (portal_wall_hit.isValid()) {
-                PixelShader secondary{settings, render_state};
+                PixelShader secondary{render_data, render_state};
                 if (secondary.prepare(ground_hit, portal_wall_hit, portal_from, portal_to, portal_origin, y, mid_point)) {
                     Color flare_light;
                     Color additional_light;
@@ -428,8 +444,8 @@ struct PixelShader {
                                 const vec3 RoL = Ro - point_light.position;
                                 if (RoL.dot(V) > 0.0f) {
                                     f32 distance = (V * V.dot(RoL) - RoL).squaredLength();
-                                    if (distance < (settings.projectile_radius * settings.projectile_radius)) {
-                                        f32 flare_intensity = (settings.projectile_radius - sqrtf(distance)) / settings.projectile_radius;
+                                    if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
+                                        f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
                                         flare_intensity *= flare_intensity;
                                         flare_intensity *= flare_intensity;
                                         flare_intensity *= flare_intensity;

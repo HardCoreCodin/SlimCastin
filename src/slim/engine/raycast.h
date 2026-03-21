@@ -3,6 +3,143 @@
 #include "./render_data.h"
 
 
+INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
+INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start && value <= end; }
+INLINE_XPU u8 min(u8 a, u8 b) { return a < b ? a : b; }
+INLINE_XPU u8 max(u8 a, u8 b) { return a > b ? a : b; }
+INLINE_XPU u8 clamp(u8 v, u8 min_v, u8 max_v) { return min(max(v, min_v), max_v); }
+INLINE_XPU u8 closestLog2(u32 v) {
+    u8 r = 0;
+    while (v) {r++; v >>= 1;}
+    return r;
+}
+INLINE_XPU u8 computeMip(f32 pixel_coverage, f32 texel_size, u8 last_mip) {
+    return pixel_coverage < texel_size ? 0 : min(last_mip, closestLog2((u32)(pixel_coverage / texel_size) - 1));
+}
+INLINE_XPU bool inRange(vec2 start, vec2 value, vec2 end) {
+    return inRange(start.x, value.x, end.x) &&
+           inRange(start.y, value.y, end.y);
+}
+INLINE_XPU f32 getU(vec2 v) {
+    f32 u = v.y / v.x;
+    if (u > 1.0f || u < -1.0f) u = -1.0f / u;
+    return u + 1.0f;
+}
+
+struct RayHit {
+    vec2i tile_coords;
+    vec2 position;
+
+    f32 distance;
+    f32 perp_distance;
+    f32 texture_u;
+
+    u16 edge_id;
+    u8 column_id;
+    u8 texture_id;
+    u8 edge_is;
+
+    INLINE_XPU void init() {
+        column_id = INVALID_COLUMN_ID;
+        edge_id = INVALID_EDGE_ID;
+    }
+
+    INLINE_XPU bool isValid() {
+        return column_id != INVALID_COLUMN_ID ||
+               edge_id != INVALID_EDGE_ID;
+    }
+
+    INLINE_XPU void finalizeFromEdge(const TileEdge& edge, const vec2 ray_origin, const vec2 forward) {
+        texture_id = edge.texture_id;
+
+        perp_distance = fmaxf(0.001f, forward.dot(position - ray_origin));
+
+        tile_coords.x = edge_is & FACING_RIGHT ? (i32)position.x - 1 : (i32)position.x;
+        tile_coords.y = edge_is & FACING_DOWN  ? (i32)position.y - 1 : (i32)position.y;
+
+        texture_u = edge_is & (FACING_LEFT | FACING_RIGHT) ?
+            position.y - (f32)edge.from.y :
+            position.x - (f32)edge.from.x;
+
+        texture_u -= (f32)(i32)texture_u;
+
+        if (edge_is & (FACING_RIGHT | FACING_UP))
+            texture_u = 1.0f - texture_u;
+    }
+
+    INLINE_XPU void finalizeFromColumn(const Circle& column, const vec2 ray_origin, const vec2 ray_direction, const vec2 forward) {
+        position = ray_direction * distance;
+        perp_distance = fmaxf(0.001f, forward.dot(position));
+        position += ray_origin;
+        tile_coords.x = (i32)position.x;
+        tile_coords.y = (i32)position.y;
+        texture_u = getU(position - column.position);
+        texture_u *= column.radius;
+        texture_id = 12;
+        edge_is = 0;
+    }
+};
+
+struct GroundHit {
+    f32 z;
+    u8 mip;
+    u8 flags;
+};
+
+struct WallHit {
+    vec2 ray_direction, hit_position, hit_normal;
+    f32 u, v, texel_step;
+    u16 top, bot, edge_id;
+    u8 texture_id;
+    u8 mip;
+    u8 edge_is;
+    u8 column_id;
+
+    INLINE_XPU void init() {
+        v = -1.0f;
+    }
+
+    INLINE_XPU bool isValid() const {
+        return v >= 0.0f;
+    }
+
+    INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const Circle* columns, const RayHit &ray_hit) {
+        ray_direction = new_ray_direction;
+        texture_id = ray_hit.texture_id;
+
+        u = ray_hit.texture_u;
+        v = 0.0f;
+
+        f32 height = column_height_factor / ray_hit.perp_distance;
+        f32 half_height = height * 0.5f;
+        mip = computeMip(ray_hit.perp_distance * pixel_coverage_factor, texel_size, last_mip);
+        texel_step = 1.0f / height;
+        i32 ibot = mid_point + (i32)half_height;
+        bot = ibot >= (i32)screen_height ? (screen_height - 1) : (u16)ibot;
+
+        if (mid_point < half_height) {
+            v = (half_height - mid_point) / height;
+            top    = 0;
+        }
+        else
+            top = (u16)(mid_point - half_height);
+
+        edge_is = ray_hit.edge_is;
+        edge_id = ray_hit.edge_id;
+        column_id = ray_hit.column_id;
+        hit_position = ray_hit.position;
+        if (column_id != INVALID_COLUMN_ID) {
+            hit_normal = (hit_position - columns[column_id].position).normalized();
+        }
+    }
+};
+
+struct WallHitGroup {
+    WallHit main;
+    WallHit portal;
+    vec2 portal_origin;
+};
+
 struct Ray {
     RayHit hit;
     vec2 origin;
@@ -113,7 +250,47 @@ struct Ray {
 };
 
 
-struct RayCaster {
+struct Portal {
+    Color color;
+    vec3 position;
+    f32 radius;
+    u16 edge_id;
+    u8 edge_is;
+
+    INLINE_XPU void init() {
+        color = 0.0f;
+        position = vec3{0.0f};
+        radius = 0.0f;
+        edge_id = INVALID_EDGE_ID;
+        edge_is = 0;
+    }
+
+    INLINE_XPU i32 getRotation(u8 to_edge_is) const {
+        i32 ray_rotation = 0;
+        if (edge_is & (FACING_LEFT | FACING_RIGHT)) {
+            if (to_edge_is & (FACING_DOWN | FACING_UP)) {
+                if (edge_is & FACING_RIGHT)
+                    ray_rotation = (to_edge_is & FACING_UP) ? 90 : -90;
+                else
+                    ray_rotation = (to_edge_is & FACING_DOWN) ? 90 : -90;
+            } else if ((edge_is & FACING_RIGHT) == (to_edge_is & FACING_RIGHT))
+                ray_rotation = 180;
+        } else
+            if (to_edge_is & (FACING_LEFT | FACING_RIGHT)) {
+                if (edge_is & FACING_UP)
+                    ray_rotation = (to_edge_is & FACING_LEFT) ? 90 : -90;
+                else
+                    ray_rotation = (to_edge_is & FACING_RIGHT) ? 90 : -90;
+            } else
+                if ((edge_is & FACING_UP) == (to_edge_is & FACING_UP))
+                    ray_rotation = 180;
+
+        return ray_rotation;
+    }
+};
+
+
+struct RayCast {
     Portal portal_from;
     Portal portal_to;
     RayHit closest_hit;
@@ -128,21 +305,7 @@ struct RayCaster {
     f32 texel_size;
     f32 pixel_coverage_factor;
     f32 column_height_factor;
-    f32 up_aim;
-    f32 up_aim_over_focal_length;
     u8 last_mip;
-
-    void onScreenChanged(const f32 focal_length, vec2 new_forward, vec2 right, f32 new_up_aim) {
-        right = right.normalized() * ((f32)screen_width / (f32)screen_height);
-        forward = new_forward.normalized();
-        right_step = right / (f32)screen_width;
-        column_height_factor = 2.0f * focal_length * (f32)screen_height;
-        pixel_coverage_factor = 2.0f * focal_length / (f32)screen_height;
-        first_ray_direction = focal_length * forward + right_step * (0.5f - 0.5f * (f32)screen_width);
-        up_aim = new_up_aim;
-        up_aim_over_focal_length = up_aim / focal_length;
-        mid_point = (i32)((1.0f + up_aim) * (f32)(screen_height >> 1));
-    }
 
     INLINE_XPU void generateWallHit(WallHit &wall_hit, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
         closest_hit.init();

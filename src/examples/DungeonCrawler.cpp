@@ -1,7 +1,7 @@
 #include "./textures.h"
 
 #include "../slim/viewport/navigation.h"
-#include "../slim/renderer/renderer.h"
+#include "../slim/engine/engine.h"
 #include "../slim/draw/hud.h"
 #include "../slim/app.h"
 
@@ -123,6 +123,8 @@ Tile* WALLS2[] = {
 
 
 struct DungeonCrawler : SlimApp {
+	Engine engine;
+
 	bool shadows_enabled = true;
 	bool AO_map_enabled = true;
 	bool normal_map_enabled = true;
@@ -130,7 +132,7 @@ struct DungeonCrawler : SlimApp {
 
     // HUD:
     HUDLine FPS {"FPS : "};
-    HUDLine GPU {"GPU : ", "Off", "On", &ray_cast_renderer::useGPU};
+    HUDLine GPU {"GPU : ", "Off", "On", &engine.renderer.useGPU};
     HUDLine Mode{"Mode: ", "Beauty"};
     HUDLine BRDF{"BRDF: ", "GGX"};
     HUDLine Shadows{"Shadows: ", "Off", "On", &shadows_enabled};
@@ -148,7 +150,7 @@ struct DungeonCrawler : SlimApp {
     TileMap tile_map;
 	Slice<Texture> textures_slice{textures, Texture_Count};
 
-	RayCasterSettings settings;
+	RenderData render_data;
 
 	bool initted = false;
 	bool fired_flare = false;
@@ -166,48 +168,48 @@ struct DungeonCrawler : SlimApp {
 
         if (mouse::is_captured) {
 	        navigation.update(camera, delta_time);
-        	if (navigation.moved || tile_map_changed) ray_cast_renderer::onMove(camera, tile_map);
+        	if (navigation.moved || tile_map_changed) engine.onMove(camera, tile_map);
         	if (navigation.moved || tile_map_changed ||
 	            navigation.turned ||
-	            navigation.zoomed) ray_cast_renderer::onScreenChanged(camera, tile_map);
-        } else ray_cast_renderer::onEditHover(tile_map, {mouse::pos_x, mouse::pos_y});
+	            navigation.zoomed) engine.onScreenChanged(camera, tile_map);
+        } else engine.onEditHover(tile_map, {mouse::pos_x, mouse::pos_y});
     	navigation.moved = navigation.turned = navigation.zoomed = false;
 
     	time += delta_time;
 
-    	PointLight& torch{ray_cast_renderer::render_state.lights[0]};
-    	torch.position = vec3{ray_cast_renderer::ray_caster.position.x, 0.0f, ray_cast_renderer::ray_caster.position.y};
+    	PointLight& torch{engine.render_state.lights[0]};
+    	torch.position = vec3{engine.renderer.position.x, 0.0f, engine.renderer.position.y};
     	torch.position += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
     	torch.position += camera.orientation.Z * 0.2f;
     	torch.position.y += sinf(time * 2.0f) * 0.3f + 0.1f;
 
-    	torch.flicker(ray_cast_renderer::torch_light_color, ray_cast_renderer::torch_light_intensity, time);
+    	torch.flicker(engine.torch_light_color, engine.torch_light_intensity, time);
 
-    	ray_cast_renderer::update(time, delta_time, tile_map);
+    	engine.update(time, delta_time, tile_map);
 
     	if (fired_flare) {
     		fired_flare = false;
-    		ray_cast_renderer::fireFlare(time);
+    		engine.fireFlare(time);
     	}
     	if (launched_portal_from) {
     		launched_portal_from = false;
-    		ray_cast_renderer::launchPortalFrom(time);
+    		engine.launchPortalFrom(time);
     	}
     	if (launched_portal_to) {
     		launched_portal_to = false;
-    		ray_cast_renderer::launchPortalTo(time);
+    		engine.launchPortalTo(time);
     	}
     }
 
     void OnRender() override {
-        ray_cast_renderer::render(window::content, tile_map);
+        engine.render(window::content, tile_map);
         if (hud.enabled)
             drawHUD(hud, window::content, dimensions);
     }
 
     void OnKeyChanged(u8 key, bool is_pressed) override {
-    	u8& flags{ray_cast_renderer::render_state.flags};
-    	RenderMode& render_mode{ray_cast_renderer::render_state.render_mode};
+    	u8& flags{engine.render_state.flags};
+    	RenderMode& render_mode{engine.render_state.render_mode};
     	if (is_pressed) {
     		if (!mouse::is_captured) {
     			if (key == controls::key_map::ctrl) flags |= EDITING_WALLS;
@@ -226,7 +228,7 @@ struct DungeonCrawler : SlimApp {
     		} else {
     			if (key == controls::key_map::ctrl) flags &= ~EDITING_WALLS;
     			if (key == controls::key_map::alt) flags &= ~EDITING_COLUMNS;
-    			if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) ray_cast_renderer::onStopEditing();
+    			if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) engine.onStopEditing();
     		}
     		if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
         	if (key == 'L') flags = BRDF_Lambert | (flags & ~BRDF_MASK);
@@ -237,7 +239,7 @@ struct DungeonCrawler : SlimApp {
         	if (key == 'N') flags = flags & USE_NORMAL_MAP ? (flags & ~USE_NORMAL_MAP) : (flags | USE_NORMAL_MAP);
         	if (key == 'R') flags = flags & USE_ROUGHNESS_MAP ? (flags & ~USE_ROUGHNESS_MAP) : (flags | USE_ROUGHNESS_MAP);
         	if (key == 'H') flags = flags & CAST_SHADOWS ? (flags & ~CAST_SHADOWS) : (flags | CAST_SHADOWS);
-            if (key == 'G' && USE_GPU_BY_DEFAULT) ray_cast_renderer::toggleUseOfGPU(tile_map);
+            if (key == 'G' && USE_GPU_BY_DEFAULT) engine.toggleUseOfGPU(tile_map);
             if (key == '1') render_mode = RenderMode_Beauty;
             if (key == '2') render_mode = RenderMode_Untextured;
             if (key == '3') render_mode = RenderMode_Depth;
@@ -284,36 +286,37 @@ struct DungeonCrawler : SlimApp {
     void OnWindowResize(u16 width, u16 height) override {
         dimensions.update(width, height);
 
-    	if (initted) ray_cast_renderer::onResize(width, height, camera, tile_map);
+    	if (initted)
+    		engine.onResize(width, height, camera, tile_map);
     	else {
     		initted = true;
-    		ray_cast_renderer::useGPU = USE_GPU_BY_DEFAULT;
+    		engine.renderer.useGPU = USE_GPU_BY_DEFAULT;
 
-    		// F->bottom.portal_to = &T->right;
-    		// T->right.portal_to = &F->bottom;
+    		tile_map.load(SliceFromStaticArray(Tile*, WALLS));
 
-    		initTileMap(tile_map);
-    		readTileMap(tile_map, SliceFromStaticArray(Tile*, WALLS));
-    		generateTileMapEdges(tile_map);
+    		render_data.textures = textures_slice.data;
+    		render_data.texture_count = (u16)textures_slice.size;
+    		render_data.floor_texture_id = Texture_SoneWall9Color;
+    		render_data.ceiling_texture_id = Texture_SoneWall6Color;
+    		render_data.map_width = tile_map.width;
+    		render_data.map_height = tile_map.height;
 
-    		settings.init(textures_slice, Texture_SoneWall9Color, Texture_SoneWall6Color, tile_map.width, tile_map.height);
-
-    		ray_cast_renderer::init(&settings, dimensions, camera, tile_map);
+    		engine.init(tile_map, render_data, dimensions, camera);
     	}
     }
 
     void OnMouseButtonDown(mouse::Button &mouse_button) override {
         mouse::pos_raw_diff_x = mouse::pos_raw_diff_y = 0;
-    	if (ray_cast_renderer::render_state.flags & (EDITING_COLUMNS | EDITING_WALLS)) {
-    		if (&mouse_button == &mouse::left_button) ray_cast_renderer::onEditLeftMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
-    		if (&mouse_button == &mouse::right_button) ray_cast_renderer::onEditRightMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
+    	if (engine.render_state.flags & (EDITING_COLUMNS | EDITING_WALLS)) {
+    		if (&mouse_button == &mouse::left_button) engine.onEditLeftMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
+    		if (&mouse_button == &mouse::right_button) engine.onEditRightMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
     	}
     }
 
 	void OnMouseButtonUp(mouse::Button &mouse_button) override {
     	if (&mouse_button == &mouse::left_button ||
 			&mouse_button == &mouse::right_button)
-    		ray_cast_renderer::onStopEditing();
+    		engine.onStopEditing();
     }
 
     void OnMouseButtonDoubleClicked(mouse::Button &mouse_button) override {
