@@ -254,15 +254,45 @@ struct Portal {
     Color color;
     vec3 position;
     f32 radius;
+    f32 spawned_time;
+    u16 projectile_index;
     u16 edge_id;
     u8 edge_is;
 
     INLINE_XPU void init() {
-        color = 0.0f;
+        spawned_time = 0.0f;
         position = vec3{0.0f};
         radius = 0.0f;
+        projectile_index = INVALID_PROJECTILE_INDEX;
         edge_id = INVALID_EDGE_ID;
         edge_is = 0;
+    }
+
+    INLINE_XPU bool isActive() const {
+        return edge_id != INVALID_EDGE_ID;
+    }
+
+    INLINE_XPU bool isHit(const RayHit& ray_hit) const {
+        if (ray_hit.edge_id != edge_id)
+            return false;
+
+        if (edge_is & (FACING_DOWN | FACING_UP))
+            return fabsf(position.x - ray_hit.position.x) < PORTAL_FINAL_RADIUS;
+
+        return fabsf(position.z - ray_hit.position.y) < PORTAL_FINAL_RADIUS;
+    }
+
+    INLINE_XPU bool containsWallPosition2D(const vec2& wall_position_2d, u16 wall_edge_id, f32 y_factor = 0.5f) const {
+        return wall_edge_id == edge_id && (
+            wall_position_2d - vec2{position.x, position.z}
+        ).squaredLength() < (radius * radius);
+    }
+
+    INLINE_XPU bool containsWallPosition3D(const vec3& wall_position_3d, u16 wall_edge_id, f32 y_factor = 0.5f) const {
+        return wall_edge_id == edge_id && (
+            vec3{wall_position_3d.x, wall_position_3d.y * y_factor, wall_position_3d.z} -
+            vec3{position.x, position.y * y_factor, position.z}
+        ).squaredLength() < (radius * radius);
     }
 
     INLINE_XPU i32 getRotation(u8 to_edge_is) const {
@@ -287,12 +317,117 @@ struct Portal {
 
         return ray_rotation;
     }
+
+    void update(const f32 time, const TileEdge* edges) {
+        const f32 elapsed_time = time - spawned_time;
+        if (elapsed_time <= PORTAL_GROW_TIME) {
+            radius = PORTAL_GROW_RADIUS +
+                            PORTAL_GROW_RANGE * smoothStep(0.0f, 1.0f, PORTAL_GROW_RATE * elapsed_time);
+            if ((fabsf(position.y) + (radius * 2.0f) + PORTAL_BREATHING_RANGE) > 1.0f)
+                position.y = (1.0f - (radius * 2.0f) - PORTAL_BREATHING_RANGE) * (position.y > 0.0f ? 1.0f : -1.0f);
+
+            const TileEdge& edge{edges[edge_id]};
+            if (edge.is & (FACING_DOWN | FACING_UP)) {
+                if ((position.x + radius + PORTAL_BREATHING_RANGE) > edge.to.x)
+                    position.x = edge.to.x - radius - PORTAL_BREATHING_RANGE;
+                else if ((position.x - radius - PORTAL_BREATHING_RANGE) < edge.from.x)
+                    position.x = edge.from.x + radius + PORTAL_BREATHING_RANGE;
+            } else {
+                if ((position.z + radius + PORTAL_BREATHING_RANGE) > edge.to.y)
+                    position.z = edge.to.y - radius - PORTAL_BREATHING_RANGE;
+                else if ((position.z - radius - PORTAL_BREATHING_RANGE) < edge.from.y)
+                    position.z = edge.from.y + radius + PORTAL_BREATHING_RANGE;
+            }
+        } else
+            radius = PORTAL_FINAL_RADIUS + PORTAL_BREATHING_RANGE * cos((elapsed_time - PORTAL_GROW_TIME) * 2.0f);
+    }
 };
 
 
+struct Portals {
+    Portal from{Cyan};
+    Portal to{Magenta};
+
+    INLINE_XPU bool areBothActive() const {
+        return from.isActive() && to.isActive();
+    }
+
+    INLINE_XPU const Portal* getPortalsFromRayHit(const RayHit& ray_hit, const Portal** other_portal) const {
+        if (ray_hit.edge_id != INVALID_EDGE_ID) {
+            if (from.isHit(ray_hit)) {
+                *other_portal = &to;
+                return &from;
+            }
+
+            if (to.isHit(ray_hit)) {
+                *other_portal = &from;
+                return &to;
+            }
+        }
+
+        *other_portal = nullptr;
+        return nullptr;
+    }
+
+    INLINE_XPU const Portal* getPortalsFromWallPosition2D(const vec2& wall_position_2d, u16 wall_edge_id, const Portal** other_portal) const {
+        if (wall_edge_id != INVALID_EDGE_ID) {
+            if (from.containsWallPosition2D(wall_position_2d, wall_edge_id)) {
+                *other_portal = &to;
+                return &from;
+            }
+
+            if (to.containsWallPosition2D(wall_position_2d, wall_edge_id)) {
+                *other_portal = &from;
+                return &to;
+            }
+        }
+
+        *other_portal = nullptr;
+        return nullptr;
+    }
+
+    INLINE_XPU const Portal* getPortalsFromWallPosition3D(const vec3& wall_position, u16 wall_edge_id, const Portal** other_portal, f32 y_factor = 0.5f) const {
+        if (wall_edge_id != INVALID_EDGE_ID) {
+            if (from.containsWallPosition3D(wall_position, wall_edge_id, y_factor)) {
+                *other_portal = &to;
+                return &from;
+            }
+
+            if (to.containsWallPosition3D(wall_position, wall_edge_id, y_factor)) {
+                *other_portal = &from;
+                return &to;
+            }
+        }
+
+        *other_portal = nullptr;
+        return nullptr;
+    }
+
+    Portal* getPortalsFromProjectileIndex(u8 projectile_index, const Portal** other_portal) {
+        if (projectile_index != INVALID_PROJECTILE_INDEX) {
+            if (from.projectile_index == projectile_index) {
+                *other_portal = &to;
+                return &from;
+            }
+
+            if (to.projectile_index == projectile_index) {
+                *other_portal = &from;
+                return &to;
+            }
+        }
+
+        *other_portal = nullptr;
+        return nullptr;
+    }
+
+    void update(const f32 time, const TileEdge* edges) {
+        if (from.isActive()) from.update(time, edges);
+        if (to.isActive()) to.update(time, edges);
+    }
+};
+
 struct RayCast {
-    Portal portal_from;
-    Portal portal_to;
+    Portals portals;
     RayHit closest_hit;
     Ray ray;
     vec2 position;
@@ -339,29 +474,18 @@ struct RayCast {
         ray.finalizeHit(edges.data, columns.data);
         wall_hit_group.main.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
 
-        if (portal_from.edge_id == INVALID_EDGE_ID ||
-            portal_to.edge_id == INVALID_EDGE_ID)
+        if (!portals.areBothActive())
             return;
 
-        const Portal* portal = nullptr;
-        if (ray.hit.edge_id == portal_from.edge_id && fabsf(
-            (portal_from.edge_is & (FACING_DOWN | FACING_UP)) ?
-            (portal_from.position.x - ray.hit.position.x) :
-            (portal_from.position.z - ray.hit.position.y)) < PORTAL_FINAL_RADIUS)
-            portal = &portal_from;
-        if (portal == nullptr && ray.hit.edge_id == portal_to.edge_id && fabsf(
-            (portal_to.edge_is & (FACING_DOWN | FACING_UP)) ?
-            (portal_to.position.x - ray.hit.position.x) :
-            (portal_to.position.z - ray.hit.position.y)) < PORTAL_FINAL_RADIUS)
-            portal = &portal_to;
+        const Portal* other_portal = nullptr;
+        const Portal* portal = portals.getPortalsFromRayHit(ray.hit, &other_portal);
 
         if (portal == nullptr)
             return;
 
-        const Portal& other_portal{portal == &portal_from ? portal_to : portal_from};
-        const vec2 other_portal_position{other_portal.position.x, other_portal.position.z};
+        const vec2 other_portal_position{other_portal->position.x, other_portal->position.z};
 
-        i32 ray_rotation = portal->getRotation(other_portal.edge_is);
+        i32 ray_rotation = portal->getRotation(other_portal->edge_is);
 
         vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - position;
         vec2 origin_to_hit_position = ray.hit.position - position;

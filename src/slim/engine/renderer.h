@@ -31,6 +31,22 @@ struct Renderer : RayCast {
     WallHitGroup wall_hits[MAX_WALL_HITS_COUNT];
     GroundHit ground_hits[MAX_GROUND_HITS_COUNT];
 
+    void init(const RenderData &map_render_data) {
+        render_data = map_render_data;
+        render_state.init();
+
+        portals.from.init();
+        portals.to.init();
+
+        texel_size = 1.0f / (f32)render_data.textures[0].width;
+        last_mip = (u8)(render_data.textures[0].mip_count - 1);
+
+        prior_screen_height = 0;
+        prior_up_aim = 0.0f;
+
+        initDataOnGPU(render_data);
+    }
+
     void generateFloorAndCeilingHits() {
         f32 Y = 1.0f + up_aim;
 
@@ -93,23 +109,27 @@ struct Renderer : RayCast {
 
         prior_up_aim = up_aim;
     }
-    
-    void switchToRenderingOnCPU() {
-        downloadWallHits(wall_hits, screen_width);
-    }
 
-    void switchToRenderingOnGPU(const TileMap& tile_map) {
-        uploadWallHits(wall_hits, screen_width);
-        uploadColumns(tile_map.columns);
-        uploadEdges(tile_map.edges);
+    void toggleUseOfGPU(const TileMap& tile_map) {
+#ifdef __CUDACC__
+        if (useGPU) {
+            downloadWallHits(wall_hits, screen_width);
+            useGPU = false;
+        } else {
+            uploadWallHits(wall_hits, screen_width);
+            uploadColumns(tile_map.columns);
+            uploadEdges(tile_map.edges);
+            useGPU = true;
+        }
+#endif
     }
 
     void updatePortalLights() {
         for (u8 i = 0; i < render_state.light_count; i++) {
             vec2 light_position{render_state.lights[i].position.x, render_state.lights[i].position.z};
 
-            i32 ray_rotation = portal_from.getRotation(portal_to.edge_is);
-            vec2 origin_to_portal = vec2{portal_from.position.x, portal_from.position.z} - light_position;
+            i32 ray_rotation = portals.from.getRotation(portals.to.edge_is);
+            vec2 origin_to_portal = vec2{portals.from.position.x, portals.from.position.z} - light_position;
             if (ray_rotation == 90) {
                 origin_to_portal = origin_to_portal.ccw90();
             } else if (ray_rotation == -90) {
@@ -117,13 +137,13 @@ struct Renderer : RayCast {
             } else if (ray_rotation == 180) {
                 origin_to_portal = -origin_to_portal;
             }
-            vec2 target = vec2{portal_to.position.x, portal_to.position.z} - origin_to_portal;
+            vec2 target = vec2{portals.to.position.x, portals.to.position.z} - origin_to_portal;
             render_state.lights_through_portal_from[i].x = target.x;
             render_state.lights_through_portal_from[i].z = target.y;
             render_state.lights_through_portal_from[i].y = render_state.lights[i].position.y;
 
-            ray_rotation = portal_to.getRotation(portal_from.edge_is);
-            origin_to_portal = vec2{portal_to.position.x, portal_to.position.z} - light_position;
+            ray_rotation = portals.to.getRotation(portals.from.edge_is);
+            origin_to_portal = vec2{portals.to.position.x, portals.to.position.z} - light_position;
             if (ray_rotation == 90) {
                 origin_to_portal = origin_to_portal.ccw90();
             } else if (ray_rotation == -90) {
@@ -131,7 +151,7 @@ struct Renderer : RayCast {
             } else if (ray_rotation == 180) {
                 origin_to_portal = -origin_to_portal;
             }
-            target = vec2{portal_from.position.x, portal_from.position.z} - origin_to_portal;
+            target = vec2{portals.from.position.x, portals.from.position.z} - origin_to_portal;
             render_state.lights_through_portal_to[i].x = target.x;
             render_state.lights_through_portal_to[i].z = target.y;
             render_state.lights_through_portal_to[i].y = render_state.lights[i].position.y;
@@ -148,8 +168,7 @@ struct Renderer : RayCast {
                 window_content[offset] = pixel_shader.shade(
                     ground_hit,
                     wall_hit_group.main,
-                    portal_from,
-                    portal_to,
+                    portals,
                     tile_map.edges,
                     tile_map.columns,
                     position,

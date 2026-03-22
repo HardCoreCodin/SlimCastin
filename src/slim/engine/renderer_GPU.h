@@ -60,8 +60,7 @@ __global__ void d_render(const RayCast raycast, const RenderState render_state) 
     const Pixel pixel = pixel_shader.shade(
         d_hits.ground_hits[y],
         wall_hit_group.main,
-        raycast.portal_from,
-        raycast.portal_to,
+        raycast.portals,
         d_edges,
         d_columns,
         raycast.position,

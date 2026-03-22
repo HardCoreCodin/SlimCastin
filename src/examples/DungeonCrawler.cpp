@@ -239,7 +239,7 @@ struct DungeonCrawler : SlimApp {
         	if (key == 'N') flags = flags & USE_NORMAL_MAP ? (flags & ~USE_NORMAL_MAP) : (flags | USE_NORMAL_MAP);
         	if (key == 'R') flags = flags & USE_ROUGHNESS_MAP ? (flags & ~USE_ROUGHNESS_MAP) : (flags | USE_ROUGHNESS_MAP);
         	if (key == 'H') flags = flags & CAST_SHADOWS ? (flags & ~CAST_SHADOWS) : (flags | CAST_SHADOWS);
-            if (key == 'G' && USE_GPU_BY_DEFAULT) engine.toggleUseOfGPU(tile_map);
+            if (key == 'G' && USE_GPU_BY_DEFAULT) engine.renderer.toggleUseOfGPU(tile_map);
             if (key == '1') render_mode = RenderMode_Beauty;
             if (key == '2') render_mode = RenderMode_Untextured;
             if (key == '3') render_mode = RenderMode_Depth;
