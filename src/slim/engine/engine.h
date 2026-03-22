@@ -250,67 +250,29 @@ struct Engine {
         bool teleport = false;
         const Portal* other_portal = nullptr;
         const Portal* portal = nullptr;
-        if (renderer.portals.areBothActive()) {
-            Ray ray;
-
-            ray.update(renderer.position, movement, renderer.forward);
-            f32 hit_distance = 1000000.0f;
-            u16 closest_hit_edge_id = INVALID_EDGE_ID;
-            u8 closest_hit_edge_is = 0;
-            for (u16 edge_id = 0; edge_id < (u16)tile_map.edges.size; edge_id++) {
-                if (ray.intersectsWithEdge(tile_map.edges.data[edge_id])) {
-                    ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
-                    if (ray.hit.distance < hit_distance) {
-                        hit_distance = ray.hit.distance;
-                        closest_hit_edge_id = edge_id;
-                        closest_hit_edge_is = ray.hit.edge_is;
-                    }
-                }
-            }
-
-            portal = renderer.portals.getPortalsFromWallPosition2D(position, closest_hit_edge_id, &other_portal);
+        if (renderer.portals.areBothActive() &&
+            renderer.castRay(renderer.position, movement, movement, tile_map.edges, tile_map.columns, false)) {
+            portal = renderer.portals.getPortalsFromWallPosition2D(renderer.closest_hit.position, renderer.closest_hit.edge_id, &other_portal);
             if (portal) {
-                const vec2 new_position = position + movement;
-                if (closest_hit_edge_is & (FACING_UP | FACING_DOWN))
-                    teleport = new_position.y > portal->position.z != position.y > portal->position.z;
+                if (renderer.closest_hit.edge_is & (FACING_UP | FACING_DOWN))
+                    teleport = renderer.position.y > portal->position.z != position.y > portal->position.z;
                 else
-                    teleport = new_position.x > portal->position.x != position.x > portal->position.x;
+                    teleport = renderer.position.x > portal->position.x != position.x > portal->position.x;
             }
         }
 
         if (teleport) {
-            i32 ray_rotation = portal->getRotation(other_portal->edge_is);
+            i32 rotation = 0;
+            position = portal->teleportTo(*other_portal, renderer.position, rotation);
+            position += movement.rotatedBy(rotation);
 
-            vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - renderer.position;
-
-            vec2 up = vec2(camera.orientation.Y.x, camera.orientation.Y.z);
-            vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z);
-            vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z);
-            if (ray_rotation == 90) {
-                origin_to_portal = origin_to_portal.ccw90();
-                movement = movement.ccw90();
-                up = up.ccw90();
-                right = right.ccw90();
-                forward = forward.ccw90();
-                camera.orientation.y += DEG_TO_RAD * 90;
-            } else if (ray_rotation == -90) {
-                origin_to_portal = origin_to_portal.cw90();
-                movement = movement.cw90();
-                up = up.cw90();
-                right = right.cw90();
-                forward = forward.cw90();
-                camera.orientation.y -= DEG_TO_RAD * 90;
-            } else if (ray_rotation == 180) {
-                origin_to_portal = -origin_to_portal;
-                movement = -movement;
-                up = -up;
-                right = -right;
-                forward = -forward;
-                camera.orientation.y += DEG_TO_RAD * 180;
-            }
-            const vec2 other_portal_origin = vec2{other_portal->position.x, other_portal->position.z} - origin_to_portal;
-            position = other_portal_origin + movement;
-
+            // Reorient the camera:
+            if (     rotation ==  90) camera.orientation.y += DEG_TO_RAD * 90;
+            else if (rotation == -90) camera.orientation.y -= DEG_TO_RAD * 90;
+            else if (rotation == 180) camera.orientation.y += DEG_TO_RAD * 180;
+            const vec2 up = vec2(camera.orientation.Y.x, camera.orientation.Y.z).rotatedBy(rotation);
+            const vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z).rotatedBy(rotation);
+            const vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z).rotatedBy(rotation);
             camera.orientation.X.x = right.x;
             camera.orientation.X.z = right.y;
             camera.orientation.Y.x = up.x;

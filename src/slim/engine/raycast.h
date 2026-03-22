@@ -171,7 +171,8 @@ struct Ray {
         hit.init();
     }
 
-    INLINE_XPU void finalizeHit(const TileEdge *edges, const Circle* columns) {
+    INLINE_XPU void finalizeHit(const TileEdge *edges, const Circle* columns, const f32 offset = 0.0f) {
+        hit.distance = sqrtf(hit.distance) + offset;
         if (hit.column_id != INVALID_COLUMN_ID)
             hit.finalizeFromColumn(columns[hit.column_id], origin, direction, forward);
         else
@@ -341,6 +342,13 @@ struct Portal {
         } else
             radius = PORTAL_FINAL_RADIUS + PORTAL_BREATHING_RANGE * cos((elapsed_time - PORTAL_GROW_TIME) * 2.0f);
     }
+
+    INLINE_XPU vec2 teleportTo(const Portal& other_portal, const vec2& origin, i32& rotation) const {
+        rotation = getRotation(other_portal.edge_is);
+        vec2 origin_to_portal = vec2{position.x, position.z} - origin;
+        origin_to_portal.rotateBy(rotation);
+        return vec2{other_portal.position.x, other_portal.position.z} - origin_to_portal;
+    }
 };
 
 
@@ -442,10 +450,11 @@ struct RayCast {
     f32 column_height_factor;
     u8 last_mip;
 
-    INLINE_XPU void generateWallHit(WallHit &wall_hit, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
+    INLINE_XPU bool castRay(const vec2& ray_origin, const vec2& ray_direction, const vec2& ray_forward, const Slice<TileEdge> &edges, const Slice<Circle> &columns, const bool check_columns = true) {
         closest_hit.init();
         closest_hit.distance = 10000000;
-        wall_hit.init();
+
+        ray.update(ray_origin, ray_direction, ray_forward);
 
         for (u16 i = 0; i < (u16)edges.size; i++) {
             if (ray.intersectsWithEdge(edges.data[i])) {
@@ -459,19 +468,26 @@ struct RayCast {
 
         ray.hit = closest_hit;
 
-        for (u8 i = 0; i < (u8)columns.size; i++)
-            if (ray.intersectsWithCircle(columns[i]))
-                ray.hit.column_id = i;
+        if (check_columns) {
+            for (u8 i = 0; i < (u8)columns.size; i++) {
+                if (ray.intersectsWithCircle(columns[i])) {
+                    ray.hit.column_id = i;
+                    ray.hit.edge_id = INVALID_EDGE_ID;
+                    ray.hit.edge_is = 0;
+                }
+            }
+        }
+
+        return ray.hit.isValid();
     }
 
-    INLINE_XPU void generateWallHitWithPortals(WallHitGroup &wall_hit_group, vec2 ray_direction, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
-        ray.update(position, ray_direction, forward);
-        generateWallHit(wall_hit_group.main, edges, columns);
-        if (!ray.hit.isValid())
+    INLINE_XPU void generateWallHit(WallHitGroup &wall_hit_group, vec2 ray_direction, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
+        wall_hit_group.main.init();
+        if (castRay(position, ray_direction, forward, edges, columns))
+            ray.finalizeHit(edges.data, columns.data);
+        else
             return;
 
-        ray.hit.distance  = sqrt(ray.hit.distance);
-        ray.finalizeHit(edges.data, columns.data);
         wall_hit_group.main.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
 
         if (!portals.areBothActive())
@@ -483,38 +499,17 @@ struct RayCast {
         if (portal == nullptr)
             return;
 
-        const vec2 other_portal_position{other_portal->position.x, other_portal->position.z};
-
-        i32 ray_rotation = portal->getRotation(other_portal->edge_is);
-
-        vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - position;
-        vec2 origin_to_hit_position = ray.hit.position - position;
-        vec2 ray_forward = forward;
-        if (ray_rotation == 90) {
-            ray_direction = ray_direction.ccw90();
-            ray_forward = forward.ccw90();
-            origin_to_hit_position = origin_to_hit_position.ccw90();
-            origin_to_portal = origin_to_portal.ccw90();
-        } else if (ray_rotation == -90) {
-            ray_direction = ray_direction.cw90();
-            ray_forward = forward.cw90();
-            origin_to_hit_position = origin_to_hit_position.cw90();
-            origin_to_portal = origin_to_portal.cw90();
-        } else if (ray_rotation == 180) {
-            ray_direction = -ray_direction;
-            ray_forward = -forward;
-            origin_to_hit_position = -origin_to_hit_position;
-            origin_to_portal = -origin_to_portal;
-        }
+        i32 rotation = 0;
+        wall_hit_group.portal_origin = portal->teleportTo(*other_portal, position, rotation);
+        vec2 ray_forward = forward.rotatedBy(rotation);
+        vec2 origin_to_hit_position = (ray.hit.position - position).rotatedBy(rotation);
+        ray_direction.rotateBy(rotation);
 
         f32 prior_distance = ray.hit.distance;
-        wall_hit_group.portal_origin = other_portal_position - origin_to_portal;
-        ray.update( wall_hit_group.portal_origin + origin_to_hit_position, ray_direction, ray_forward);
-        generateWallHit(wall_hit_group.portal, edges, columns);
-        if (ray.hit.isValid()) {
-            ray.hit.distance  = sqrt(ray.hit.distance) + prior_distance;
+        wall_hit_group.portal.init();
+        if (castRay(wall_hit_group.portal_origin + origin_to_hit_position, ray_direction, ray_forward, edges, columns)) {
             ray.origin = wall_hit_group.portal_origin;
-            ray.finalizeHit(edges.data, columns.data);
+            ray.finalizeHit(edges.data, columns.data, prior_distance);
             wall_hit_group.portal.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
         }
     }

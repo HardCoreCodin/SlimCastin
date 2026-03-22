@@ -84,7 +84,7 @@ struct Renderer : RayCast {
             WallHitGroup wall_hit_group;
             vec2 ray_direction = first_ray_direction;
             for (u16 x = 0; x < screen_width; x++, ray_direction += right_step) {
-                generateWallHitWithPortals(wall_hit_group, ray_direction, tile_map.edges, tile_map.columns);
+                generateWallHit(wall_hit_group, ray_direction, tile_map.edges, tile_map.columns);
                 wall_hits[x] = wall_hit_group;
             }
         }

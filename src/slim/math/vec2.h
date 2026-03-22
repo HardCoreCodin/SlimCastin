@@ -614,6 +614,14 @@ struct vec2 {
     INLINE_XPU vec2 ccw90() { return {-y, x}; }
     INLINE_XPU vec2 cw90() { return {y,-x}; }
 
+    INLINE_XPU vec2 rotatedBy(i32 angle) {
+        return angle == 90 ? ccw90() : (angle == -90 ? cw90() : (angle == 180 ? -*this : *this));
+    }
+
+    INLINE_XPU void rotateBy(i32 angle) {
+        *this = rotatedBy(angle);
+    }
+
     INLINE_XPU void shiftToNormalized() {
         x = fast_mul_add(x, 0.5f, 0.5f);
         y = fast_mul_add(y, 0.5f, 0.5f);

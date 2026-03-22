@@ -32,7 +32,7 @@ __global__ void d_generateWallHits(RayCast raycast) {
         return;
 
     vec2 ray_direction = raycast.first_ray_direction + (f32)x * raycast.right_step;
-    raycast.generateWallHitWithPortals(d_hits.wall_hits[x], ray_direction, d_edges, d_columns);
+    raycast.generateWallHit(d_hits.wall_hits[x], ray_direction, d_edges, d_columns);
 }
 
 void generateWallHitsOnGPU(const RayCast& raycast) {
