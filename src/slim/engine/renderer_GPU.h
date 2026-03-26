@@ -59,15 +59,13 @@ __global__ void d_render(const RayCast raycast, const RenderState render_state) 
     const WallHitGroup& wall_hit_group{d_hits.wall_hits[x]};
     const Pixel pixel = pixel_shader.shade(
         d_hits.ground_hits[y],
-        wall_hit_group.main,
+        wall_hit_group,
         raycast.portals,
         d_edges,
         d_columns,
         raycast.position,
         y,
-        raycast.mid_point,
-        wall_hit_group.portal,
-        wall_hit_group.portal_origin);
+        raycast.mid_point);
 
     d_window_content[raycast.screen_width * y + x] = pixel.asContent();
 }

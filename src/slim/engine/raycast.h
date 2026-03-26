@@ -135,9 +135,9 @@ struct WallHit {
 };
 
 struct WallHitGroup {
-    WallHit main;
-    WallHit portal;
-    vec2 portal_origin;
+    WallHit main_hit;
+    WallHit portal_hits[MAX_PORTAL_DEPTH];
+    vec2 portal_origins[MAX_PORTAL_DEPTH];
 };
 
 struct Ray {
@@ -482,35 +482,44 @@ struct RayCast {
     }
 
     INLINE_XPU void generateWallHit(WallHitGroup &wall_hit_group, vec2 ray_direction, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
-        wall_hit_group.main.init();
+        wall_hit_group.main_hit.init();
         if (castRay(position, ray_direction, forward, edges, columns))
             ray.finalizeHit(edges.data, columns.data);
         else
             return;
 
-        wall_hit_group.main.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+        wall_hit_group.main_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
 
         if (!portals.areBothActive())
             return;
 
-        const Portal* other_portal = nullptr;
-        const Portal* portal = portals.getPortalsFromRayHit(ray.hit, &other_portal);
+        vec2 prior_forward = forward;
+        vec2 prior_position = position;
+        for (u8 p = 0; p < MAX_PORTAL_DEPTH; p++) {
+            WallHit& portal_hit{wall_hit_group.portal_hits[p]};
+            vec2& portal_origin{wall_hit_group.portal_origins[p]};
 
-        if (portal == nullptr)
-            return;
+            const Portal* other_portal = nullptr;
+            const Portal* portal = portals.getPortalsFromRayHit(ray.hit, &other_portal);
 
-        i32 rotation = 0;
-        wall_hit_group.portal_origin = portal->teleportTo(*other_portal, position, rotation);
-        vec2 ray_forward = forward.rotatedBy(rotation);
-        vec2 origin_to_hit_position = (ray.hit.position - position).rotatedBy(rotation);
-        ray_direction.rotateBy(rotation);
+            if (portal == nullptr)
+                return;
 
-        f32 prior_distance = ray.hit.distance;
-        wall_hit_group.portal.init();
-        if (castRay(wall_hit_group.portal_origin + origin_to_hit_position, ray_direction, ray_forward, edges, columns)) {
-            ray.origin = wall_hit_group.portal_origin;
-            ray.finalizeHit(edges.data, columns.data, prior_distance);
-            wall_hit_group.portal.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+            i32 rotation = 0;
+            portal_origin = portal->teleportTo(*other_portal, prior_position, rotation);
+            vec2 ray_forward = prior_forward.rotatedBy(rotation);
+            vec2 origin_to_hit_position = (ray.hit.position - prior_position).rotatedBy(rotation);
+            ray_direction.rotateBy(rotation);
+
+            f32 prior_distance = ray.hit.distance;
+            portal_hit.init();
+            if (castRay(portal_origin + origin_to_hit_position, ray_direction, ray_forward, edges, columns)) {
+                ray.origin = portal_origin;
+                ray.finalizeHit(edges.data, columns.data, prior_distance);
+                portal_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+            }
+            prior_position = portal_origin;
+            prior_forward = ray_forward;
         }
     }
 };

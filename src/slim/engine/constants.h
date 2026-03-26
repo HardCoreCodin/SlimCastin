@@ -7,6 +7,8 @@
 #define MAX_WALL_HITS_COUNT (1024*5)
 #define MAX_GROUND_HITS_COUNT (1024*2)
 
+#define MAX_PORTAL_DEPTH 32
+
 #define DEFAULT_RENDER_MODE RenderMode_Beauty
 
 #define CAST_SHADOWS      (1 << 2)

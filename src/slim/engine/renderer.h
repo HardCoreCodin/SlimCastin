@@ -167,15 +167,13 @@ struct Renderer : RayCast {
                 const WallHitGroup& wall_hit_group{wall_hits[x]};
                 window_content[offset] = pixel_shader.shade(
                     ground_hit,
-                    wall_hit_group.main,
+                    wall_hit_group,
                     portals,
                     tile_map.edges,
                     tile_map.columns,
                     position,
                     y,
-                    mid_point,
-                    wall_hit_group.portal,
-                    wall_hit_group.portal_origin).asContent();
+                    mid_point).asContent();
             }
         }
     }

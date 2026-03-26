@@ -345,7 +345,7 @@ struct Engine {
         const WallHitGroup& wall_hit_group{renderer.wall_hits[mouse_pos.x]};
         const GroundHit& ground_hit{renderer.ground_hits[mouse_pos.y]};
 
-        const vec2 position = renderer.position + wall_hit_group.main.ray_direction * ground_hit.z;
+        const vec2 position = renderer.position + wall_hit_group.main_hit.ray_direction * ground_hit.z;
         const vec2 start = 1.0f;
         const vec2 end = {
             (f32)(render_data.map_width - 1),
@@ -439,7 +439,7 @@ struct Engine {
             removing_tiles = true;
             onEditHover(tile_map, mouse_pos);
         } else if ((render_state.flags & EDITING_COLUMNS) && (tile_map.columns.size != 0)) {
-            const WallHit& wall_hit{renderer.wall_hits[mouse_pos.x].main};
+            const WallHit& wall_hit{renderer.wall_hits[mouse_pos.x].main_hit};
             if (wall_hit.column_id != INVALID_COLUMN_ID) {
                 tile_map.columns[wall_hit.column_id] = tile_map.columns[--tile_map.columns.size];
                 if (renderer.useGPU) uploadColumns(tile_map.columns);
