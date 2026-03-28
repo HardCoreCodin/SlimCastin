@@ -72,20 +72,19 @@ struct PortalRenderData {
         distance_fraction = fraction;
         render_through = has_both && 0.3f < distance_fraction;
         blend = render_through && distance_fraction < 0.4f;
-        if (blend)
-            blend_factor = smoothStep(0.0f, 1.0f, (distance_fraction - 0.3f) / 0.1f);
+        blend_factor = render_through ? (blend ? smoothStep(0.0f, 1.0f, (distance_fraction - 0.3f) / 0.1f) : 1.0f) : 0.0f;
     }
 
-    INLINE_XPU void updatePixel(Color& pixel, Color& additional_light, const Color& portal_color) {
+    INLINE_XPU void updatePixel(Color& pixel, const Color& portal_color) {
         if (distance_fraction > 0.4f)
             pixel *= portal_color;
         else if (distance_fraction > 0.3f) {
             if (!has_both)
                 pixel *= Color(White).lerpTo(portal_color, blend_factor);
-            additional_light = 0.5f * portal_color.lerpTo(Color(Black), smoothStep(0.0f, 1.0f, (distance_fraction - 0.3f) / 0.1f));
+            pixel += 0.5f * portal_color.lerpTo(Color(Black), smoothStep(0.0f, 1.0f, (distance_fraction - 0.3f) / 0.1f));
         }
         else if (distance_fraction > 0.2f)
-            additional_light = 0.5f * Color(Black).lerpTo(portal_color, smoothStep(0.0f, 1.0f, (distance_fraction - 0.2f) / 0.1f));
+            pixel += 0.5f * Color(Black).lerpTo(portal_color, smoothStep(0.0f, 1.0f, (distance_fraction - 0.2f) / 0.1f));
     }
 };
 
@@ -96,6 +95,7 @@ struct PixelShader {
     PortalRenderData portal_render_data;
     const Portal* portal;
     BRDFType brdf;
+    Color flare_light;
     vec3 P, N, L, LP, V, R, Ro, PortalToP;
     vec2 ground_hit_position;
     f32 NdotL, NdotV, roughness, u, v;
@@ -148,6 +148,26 @@ struct PixelShader {
             v -= (f32)(i32)v;
         }
 
+        flare_light = Black;
+        if (render_state.render_mode == RenderMode_Beauty) {
+            V = (Ro - P).normalized();
+            for (u8 i = 1; i < render_state.light_count; i++) {
+                const PointLight& point_light{render_state.lights[i]};
+                const vec3 RoL = Ro - point_light.position;
+                if (RoL.dot(V) > 0.0f) {
+                    f32 distance = (V * V.dot(RoL) - RoL).squaredLength();
+                    if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
+                        f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
+                        flare_intensity *= flare_intensity;
+                        flare_intensity *= flare_intensity;
+                        flare_intensity *= flare_intensity;
+                        flare_intensity *= flare_intensity;
+                        flare_light += point_light.color * point_light.intensity * flare_intensity;
+                    }
+                }
+            }
+        }
+
         portal_render_data.init(portals.areBothActive());
         portal = nullptr;
 
@@ -173,11 +193,7 @@ struct PixelShader {
         const WallHit& wall_hit,
         const Slice<TileEdge>& edges,
         const Slice<Circle>& columns,
-        const Portals& portals,
-        const Color* outer_pixel = nullptr,
-        const PortalRenderData* outer_portal_render_data = nullptr) {
-        Color flare_light = Black;
-        Color additional_light = Black;
+        const Portals& portals) {
         Color pixel = Magenta;
         if (render_state.render_mode == RenderMode_Beauty ||
             render_state.render_mode == RenderMode_Color)
@@ -283,10 +299,9 @@ struct PixelShader {
                 Ray ray;
                 Color light = Black;
                 if (portal)
-                    portal_render_data.updatePixel(pixel, additional_light, portal->color);
+                    portal_render_data.updatePixel(pixel, portal->color);
 
                 brdf = (BRDFType)(render_state.flags & BRDF_MASK);
-                V = (Ro - P).normalized();
                 if (brdf == BRDF_GGX) NdotV = clampedValue(N.dot(V));
                 else if (brdf == BRDF_Phong) R = (-V).reflectedAround(N);
 
@@ -372,21 +387,6 @@ struct PixelShader {
                         }
 
                         light += point_light.color * Li * NdotL * lerp(Fs, ONE_OVER_PI, F);
-
-                        if (i) {
-                            const vec3 RoL = Ro - point_light.position;
-                            if (RoL.dot(V) > 0.0f) {
-                                f32 distance = (V * V.dot(RoL) - RoL).squaredLength();
-                                if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
-                                    f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
-                                    flare_intensity *= flare_intensity;
-                                    flare_intensity *= flare_intensity;
-                                    flare_intensity *= flare_intensity;
-                                    flare_intensity *= flare_intensity;
-                                    flare_light += point_light.color * point_light.intensity * flare_intensity;
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -405,21 +405,8 @@ struct PixelShader {
             else
                 selection.r = -selection.r;
 
-            additional_light += selection;
+            pixel += selection;
         }
-
-        if (render_state.render_mode == RenderMode_Beauty)
-            pixel += additional_light;
-
-        if (outer_pixel && outer_portal_render_data && outer_portal_render_data->blend)
-            pixel = outer_pixel->lerpTo(pixel, outer_portal_render_data->blend_factor);
-
-        if (render_state.render_mode == RenderMode_Beauty)
-            pixel += flare_light;
-
-        pixel.r = clampedValue(pixel.r, 0.0f, 1.0f);
-        pixel.g = clampedValue(pixel.g, 0.0f, 1.0f);
-        pixel.b = clampedValue(pixel.b, 0.0f, 1.0f);
 
         return pixel;
     }
@@ -433,63 +420,54 @@ struct PixelShader {
         const vec2& position,
         u16 y,
         i32 mid_point) {
-
-        Color pixel = Magenta;
-
         if (!wall_hit_group.main_hit.isValid() ||
             !prepare(ground_hit, wall_hit_group.main_hit, portals, position, y, mid_point))
-            return pixel;
+            return Magenta;
 
+        Color pixel = Black;
         if (!(portal_render_data.render_through && !portal_render_data.blend))
             pixel = render(wall_hit_group.main_hit, edges, columns, portals);
 
-        if (!portal_render_data.render_through)
-            return pixel;
+        if (portal_render_data.render_through) {
+            f32 portal_blend_factor = portal_render_data.blend_factor;
+            f32 pixel_blend_factor = 1.0f - portal_blend_factor;
+            pixel *= pixel_blend_factor;
 
-        PixelShader pixel_shader_through_portal{render_data, render_state};
-        for (u8 p = 0; p < MAX_PORTAL_DEPTH; p++) {
-            const WallHit& portal_wall_hit{wall_hit_group.portal_hits[p]};
-            if (!portal_wall_hit.isValid())
-                break;
+            PixelShader pixel_shader_through_portal{render_data, render_state};
+            pixel_shader_through_portal.portal_render_data = portal_render_data;
+            for (u8 p = 0; p < MAX_PORTAL_DEPTH && pixel_shader_through_portal.portal_render_data.render_through; p++) {
+                const WallHit& portal_wall_hit{wall_hit_group.portal_hits[p]};
+                if (!portal_wall_hit.isValid())
+                    break;
 
-            if (!pixel_shader_through_portal.prepare(ground_hit, portal_wall_hit, portals, wall_hit_group.portal_origins[p], y, mid_point)) {
-                pixel = pixel.lerpTo(Color(Magenta), portal_render_data.blend_factor);
-                break;
-            }
-
-            pixel = pixel_shader_through_portal.render(portal_wall_hit, edges, columns, portals, &pixel, &portal_render_data);
-            if (!portal_render_data.blend) {
-                if (render_state.render_mode == RenderMode_Beauty) {
-                    V = (Ro - P).normalized();
-                    Color flare_light = Black;
-                    for (u8 i = 0; i < render_state.light_count; i++) {
-                        const PointLight& point_light{render_state.lights[i]};
-                        const vec3 RoL = Ro - point_light.position;
-                        if (RoL.dot(V) > 0.0f) {
-                            f32 distance = (V * V.dot(RoL) - RoL).squaredLength();
-                            if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
-                                f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
-                                flare_intensity *= flare_intensity;
-                                flare_intensity *= flare_intensity;
-                                flare_intensity *= flare_intensity;
-                                flare_intensity *= flare_intensity;
-                                flare_light += point_light.color * point_light.intensity * flare_intensity;
-                            }
-                        }
-                    }
-                    pixel += flare_light;
-                    pixel.r = clampedValue(pixel.r, 0.0f, 1.0f);
-                    pixel.g = clampedValue(pixel.g, 0.0f, 1.0f);
-                    pixel.b = clampedValue(pixel.b, 0.0f, 1.0f);
+                if (!pixel_shader_through_portal.prepare(ground_hit, portal_wall_hit, portals, wall_hit_group.portal_origins[p], y, mid_point)) {
+                    pixel += Color(Magenta) * portal_blend_factor;
+                    break;
                 }
+
+                flare_light += portal_blend_factor * pixel_shader_through_portal.flare_light;
+
+
+                if (!(pixel_shader_through_portal.portal_render_data.render_through &&
+                    !pixel_shader_through_portal.portal_render_data.blend) ||
+                    p == (MAX_PORTAL_DEPTH - 1)) {
+                    pixel_blend_factor = portal_blend_factor;
+                    if (p < (MAX_PORTAL_DEPTH - 1))
+                        pixel_blend_factor *= 1.0f - pixel_shader_through_portal.portal_render_data.blend_factor;
+
+                    pixel += pixel_blend_factor * pixel_shader_through_portal.render(portal_wall_hit, edges, columns, portals);
+                }
+
+                portal_blend_factor *= pixel_shader_through_portal.portal_render_data.blend_factor;
             }
-
-            portal_render_data = pixel_shader_through_portal.portal_render_data;
-
-            if (!portal_render_data.render_through)
-                break;
         }
 
+        if (render_state.render_mode == RenderMode_Beauty)
+            pixel += flare_light;
+
+        pixel.r = clampedValue(pixel.r, 0.0f, 1.0f);
+        pixel.g = clampedValue(pixel.g, 0.0f, 1.0f);
+        pixel.b = clampedValue(pixel.b, 0.0f, 1.0f);
         return pixel;
     }
 };
