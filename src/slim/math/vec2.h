@@ -626,6 +626,10 @@ struct vec2 {
         x = fast_mul_add(x, 0.5f, 0.5f);
         y = fast_mul_add(y, 0.5f, 0.5f);
     }
+
+    INLINE_XPU vec2 sin() const {
+        return vec2{sinf(x), sinf(y)};
+    }
 };
 
 vec2 vec2::X{1.0f, 0.0f};

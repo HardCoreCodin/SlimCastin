@@ -19,7 +19,7 @@
 #define USE_NORMAL_MAP    (1 << 7)
 
 #define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
-#define     BRDF_MASK 3
+#define BRDF_MASK 3
 
 #define MAX_POINT_LIGHTS 16
 

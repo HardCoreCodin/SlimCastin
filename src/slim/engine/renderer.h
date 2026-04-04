@@ -162,16 +162,15 @@ struct Renderer : RayCast {
         PixelShader pixel_shader{render_data, render_state};
         u32 offset = 0;
         for (u16 y = 0; y < screen_height; y++) {
-            GroundHit ground_hit = ground_hits[y];
             for (u16 x = 0; x < screen_width; x++, offset++) {
-                const WallHitGroup& wall_hit_group{wall_hits[x]};
                 window_content[offset] = pixel_shader.shade(
-                    ground_hit,
-                    wall_hit_group,
+                    ground_hits,
+                    wall_hits,
                     portals,
                     tile_map.edges,
                     tile_map.columns,
                     position,
+                    x,
                     y,
                     mid_point).asContent();
             }

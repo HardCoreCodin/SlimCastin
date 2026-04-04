@@ -213,7 +213,7 @@ struct Engine {
                 continue;
             }
 
-            PointLight& point_light{render_state.lights[i+1]};
+            PointLight& point_light{render_state.lights[i + 1]};
             point_light.position = projectile.position;
             if (i == renderer.portals.from.projectile_index)
                 point_light.flicker(renderer.portals.from.color, torch_light_intensity * 0.25f, elapsed_time);
@@ -227,7 +227,30 @@ struct Engine {
             renderer.generateWallHits(tile_map);
     }
 
-    void update(const f32 time, const f32 delta_time, const TileMap& tile_map) {
+    void update(const Camera& camera, const f32 time, const f32 delta_time, const TileMap& tile_map) {
+        render_state.time = time;
+
+        PointLight& torch{render_state.lights[0]};
+        torch.position = vec3{renderer.position.x, 0.0f, renderer.position.y};
+        torch.position += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
+        torch.position += camera.orientation.Z * 0.2f;
+        torch.position.y += sinf(time * 2.0f) * 0.3f + 0.1f;
+
+        torch.flicker(torch_light_color, torch_light_intensity, time);
+
+        Enemy& enemy{render_state.enemies[0]};
+        enemy.position = vec3{12.0f, 0.0f, 3.0f};
+        enemy.position.y += sinf(time) * 0.3f + 0.1f;
+        enemy.sincos.x = cos(time * 2.0f);
+        enemy.sincos.y = sinf(time * 3.0f);
+        enemy.color = Magenta;
+        enemy.color *= 0.2f;
+        enemy.color.r -= enemy.sincos.y * 0.1f + 0.05f;
+        enemy.color.b -= enemy.sincos.x * 0.05f - 0.1f;
+        enemy.intensity = 1.0f;
+
+        render_state.enemy_count = 1;
+
         renderer.portals.update(time, tile_map.edges.data);
 
         if (projectile_count > 0)
@@ -319,8 +342,8 @@ struct Engine {
     }
 
     void onResize(u16 width, u16 height, const Camera& camera, const TileMap& tile_map) {
-        renderer.screen_height = (height >> 1) << 1;
-        renderer.screen_width = width;
+        renderer.screen_height = render_state.screen_height = (height >> 1) << 1;
+        renderer.screen_width = render_state.screen_width = width;
         onScreenChanged(camera, tile_map);
 
         renderer.prior_screen_height = renderer.screen_height;

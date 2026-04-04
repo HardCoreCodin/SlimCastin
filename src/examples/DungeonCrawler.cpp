@@ -177,15 +177,7 @@ struct DungeonCrawler : SlimApp {
 
     	time += delta_time;
 
-    	PointLight& torch{engine.render_state.lights[0]};
-    	torch.position = vec3{engine.renderer.position.x, 0.0f, engine.renderer.position.y};
-    	torch.position += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
-    	torch.position += camera.orientation.Z * 0.2f;
-    	torch.position.y += sinf(time * 2.0f) * 0.3f + 0.1f;
-
-    	torch.flicker(engine.torch_light_color, engine.torch_light_intensity, time);
-
-    	engine.update(time, delta_time, tile_map);
+    	engine.update(camera, time, delta_time, tile_map);
 
     	if (fired_flare) {
     		fired_flare = false;
