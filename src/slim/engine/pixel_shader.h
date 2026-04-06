@@ -3,7 +3,6 @@
 #include "./raycast.h"
 #include "../math/vec3.h"
 
-
 INLINE_XPU f32 ggxTrowbridgeReitz_D(f32 roughness, f32 NdotH) { // NDF
     // http://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
     f32 a = roughness * roughness;
@@ -15,17 +14,9 @@ INLINE_XPU f32 ggxTrowbridgeReitz_D(f32 roughness, f32 NdotH) { // NDF
     );
 }
 
-INLINE_XPU f32 ggxSchlickSmith_G(f32 roughness, f32 NdotL, f32 NdotV, bool IBL = false) {
-    // https://learnopengl.com/PBR/Theory
-    // http://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
+INLINE_XPU f32 ggxSchlickSmith_G(f32 roughness, f32 NdotL, f32 NdotV) {
     f32 a = roughness * roughness;
     f32 k = a * 0.5f; // Approximation from Karis (UE4)
-    //    if (IBL) {
-    //        k *= k * 0.5f;
-    //    } else { // direct
-    //        k += 1.0f;
-    //        k *= k * 0.125f;
-    //    }
     f32 one_minus_k = 1.0f - k;
     f32 denom = fast_mul_add(NdotV, one_minus_k, k);
     f32 result = NdotV / fmaxf(denom, EPS);
@@ -45,29 +36,28 @@ INLINE_XPU f32 GGX(f32 roughness, f32 NdotL, f32 NdotV, f32 NdotH) {
     float G_V = NdotV + sqrt( (NdotV - NdotV * a2) * NdotV + a2 );
     float G_L = NdotL + sqrt( (NdotL - NdotL * a2) * NdotL + a2 );
     return D / ( G_V * G_L );
-    //
-    // const f32 G = ggxSchlickSmith_G(a2, NdotL, NdotV);
-    // return D * G
-    //           /
-    //           (4.0f * NdotL * NdotV);
 }
 
-
 struct SphereTracer {
-    f32 b, c, t_near, t_far, t_max;
+    vec3 RoC;
+    f32 proj, c, t_near, t_far, t_max;
 
-    INLINE_XPU bool hit(const vec3 &center, f32 radius, f32 one_over_radius, const vec3 &Ro, const vec3 &Rd, f32 &max_distance) {
+    INLINE_XPU bool prepare(const vec3 &center, const vec3 &Ro, const vec3 &Rd) {
+        RoC = center - Ro;
+        proj = Rd.dot(RoC);
+        return proj > 0.0f;
+    }
+
+    INLINE_XPU bool hit(f32 radius, f32 one_over_radius, f32 &max_distance) {
         t_max = max_distance * one_over_radius;
-        vec3 rc{(center - Ro) * one_over_radius};
-
-        b = Rd.dot(rc);
-        c = rc.squaredLength() - 1;
-        f32 h = b*b - c;
+        proj *= one_over_radius;
+        c = (RoC * one_over_radius).squaredLength() - 1;
+        f32 h = proj*proj - c;
 
         if (h >= 0) {
             h = sqrtf(h);
-            t_near = b - h;
-            t_far  = b + h;
+            t_near = proj - h;
+            t_far  = proj + h;
             if (t_far > 0 && t_near < t_max) {
                 max_distance = t_max * radius;
                 return true;
@@ -82,12 +72,11 @@ struct SphereTracer {
         f32 tf = Min(t_far, t_max);
         f32 tn2 = tn*tn;
         f32 tf2 = tf*tf;
-        return (c*tn - b*tn2 + tn*tn2/3.0f - (
-                c*tf - b*tf2 + tf*tf2/3.0f   ))
+        return (c*tn - proj*tn2 + tn*tn2/3.0f - (
+                c*tf - proj*tf2 + tf*tf2/3.0f   ))
                 * (3.0f / 4.0f);
     }
 };
-
 
 struct PortalRenderData {
     f32 blend_factor;
@@ -128,13 +117,19 @@ struct PortalRenderData {
 struct PixelShader {
     const RenderData& render_data;
     const RenderState& render_state;
+    const Slice<TileEdge>& edges;
+    const Slice<Circle>& columns;
+    const Portals& portals;
+
     PortalRenderData portal_render_data;
     SphereTracer sphere_tracer;
+    Ray ray;
     const Portal* portal;
-    BRDFType brdf;
+    // BRDFType brdf;
     Color flare_light;
-    vec3 P, N, L, LP, V, R, Ro, PortalToP;
+    vec3 P, N, L, V, R, Ro, PortalToP;
     vec2 ground_hit_position;
+    vec2 L2d;
     f32 NdotL, NdotV, roughness, u, v;
     u8 mip_level, texture_id, edge_is;
 
@@ -199,10 +194,41 @@ struct PixelShader {
         return true;
     }
 
+    INLINE_XPU void prepareRayCast() {
+        L2d = vec2{L.x, L.z};
+        ray.update(vec2{P.x, P.z}, L2d, ray.forward);
+    }
+
+    INLINE_XPU bool rayHit(
+        const Slice<TileEdge>& edges,
+        const Slice<Circle>& columns,
+        const u16 skip_edge_id = INVALID_EDGE_ID,
+        const f32 max_hit_distance = 1000000.0f
+        ) {
+        f32 closest_hit_distance = max_hit_distance;
+        const f32 distance_2d_squared = L2d.squaredLength();
+        for (u16 edge_id = 0; edge_id < (u16)edges.size; edge_id++) {
+            if (edge_id == skip_edge_id)
+                continue;
+
+            if (ray.intersectsWithEdge(edges.data[edge_id])) {
+                ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
+                if (ray.hit.distance < closest_hit_distance)
+                    closest_hit_distance = ray.hit.distance;
+            }
+        }
+
+        ray.hit.distance  = closest_hit_distance;
+
+        for (u8 c = 0; c < (u8)columns.size; c++)
+            ray.intersectsWithCircle(columns[c]);
+
+        return ray.hit.distance < distance_2d_squared;
+    }
+
     INLINE_XPU bool prepare(
         const GroundHit* ground_hits,
         const WallHitGroup* wall_hit_groups,
-        const Portals& portals,
         const vec2& origin,
         u16& x,
         u16& y,
@@ -215,19 +241,21 @@ struct PixelShader {
         if (render_state.render_mode == RenderMode_Beauty) {
             const f32 up_aim = (f32)render_state.screen_height * 0.5f - mid_point;
             const vec2 screen_ratio{(f32)x / (f32)render_state.screen_width, ((f32)y + up_aim) / (f32)render_state.screen_height};
-            V = (Ro - P).normalized();
+            V = P - Ro;
+            f32 hit_distance = V.length();
+            f32 fraction = 1.0f / render_state.step_count;
+            V /= hit_distance;
             for (u8 i = 1; i < (render_state.light_count + render_state.enemy_count); i++) {
-                const vec3& point_light_position{
+                const PointLight& point_light{
                     i < render_state.light_count ?
-                    render_state.lights[i].position :
-                    render_state.enemies[i - render_state.light_count].position};
-                const vec3 RoL = Ro - point_light_position;
-                f32 proj = RoL.dot(V);
-                if (proj > 0.0f) {
-                    // sphere_tracer.hit(point_light_position, f32 radius, f32 one_over_radius, const vec3 &Ro, const vec3 &Rd, f32 &max_distance)
-                    LP = V * proj - RoL;
+                    render_state.lights[i] :
+                    render_state.enemies[i - render_state.light_count]
+                };
+                bool in_enemy = false;
+                if (sphere_tracer.prepare(point_light.position, Ro, V)) {
+                    vec3 LP = V * sphere_tracer.proj - sphere_tracer.RoC;
+                    f32 distance = LP.squaredLength();
                     if (i < render_state.light_count) {
-                        f32 distance = LP.squaredLength();
                         if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
                             f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
                             flare_intensity *= flare_intensity;
@@ -238,104 +266,99 @@ struct PixelShader {
                             flare_light += render_state.lights[i].color * render_state.lights[i].intensity * flare_intensity;
                         }
                     } else {
-                        const Enemy& enemy{render_state.enemies[i - render_state.light_count]};
-                        LP *= 0.65f;
-                        LP.x *= 0.85f + enemy.sincos.x * 0.15f;
-                        LP.z *= 0.85f + enemy.sincos.x * 0.15f;
-                        LP.y *= 0.85f + enemy.sincos.y * 0.15f;
-                        f32 distance = LP.squaredLength();
-                        if (distance < 0.5f) {
-                            // const f32 LPx = LP.x;
-                            // LP = Ro - V * (proj - sqrt(1.0f - distance)) - point_light_position;
-                            // LP = LP.normalized();
-                            //
-                            // const vec2 XZ = vec2{LP.x, LP.z}.normalized();
-                            // const vec2 XY = vec2{LP.x, LP.y}.normalized();
-                            // const f32 theta = acos(XZ.dot(vec2{V.x, V.z}));//atan2f(XZ.y, XZ.x);
-                            // const f32 sigma = acos(XY.dot(vec2{V.x, V.y}));//asin(LP.y);//atan2f(XY.y, XY.x);
-                            // const vec2 sincos = render_state.enemies[i - render_state.light_count].sincos;
-                            vec2 radii = screen_ratio * proj;
-                            radii.y += point_light_position.y;
+                        vec2 radii = screen_ratio * sphere_tracer.proj;
+                        radii.y += point_light.position.y;
 
-                            radii += render_state.time;// * (screen_ratio * 10.0f).sin();
-                            radii.x *= 9.0f;
-                            radii.y *= 5.0f;
-                            radii = radii.sin();
-                            //sin((asin(LP.y) + pi) * 20.0f) *0.5f + 0.5f;//(LP * 0.5f + 0.5f).toColor();
+                        radii += render_state.time;
+                        radii.x *= 9.0f;
+                        radii.y *= 5.0f;
+                        radii = radii.sin();
 
-                            f32 radius = 0.5f - (radii.x * radii.y) * 0.02f - 0.02f;
-                            radius *= radius;
-                            if (distance < radius) {
+                        f32 radius = 0.5f - (radii.x * radii.y) * 0.02f - 0.02f;
+                        f32 one_over_radius = 1.0f / radius;
+                        if (sphere_tracer.hit(radius, one_over_radius, hit_distance)) {
+                            in_enemy = true;
 
-                                LP = Ro - V * (proj - sqrt(radius - distance)) - point_light_position;
-                                LP.x = 1.0f / LP.squaredLength();
-                                LP.x *= LP.x;
-                                LP.x *= LP.x;
+                            LP = Ro - point_light.position;
+                            vec3 step = V * radius;
+                            vec3 near = LP + step * sphere_tracer.t_near;
+                            f32 accum = 0.0f;
+                            if (render_state.step_count) {
+                                vec3 far = LP + step * sphere_tracer.t_far;
+                                step = (far - near) * fraction;
+                                LP = near + step * 0.5f;
+                                for (u8 k = 0; k < render_state.step_count; k++, LP += step) {
+                                    f32 dist = LP.squaredLength();
+                                    f32 noise = render_state.noise(LP * (7.0f / sqrtf(dist)));
+                                    noise *= noise;
+                                    noise *= noise;
+                                    noise *= noise;
 
-                                i32 X = (i32)(radii.x * 6.0f) + (i32)x;
-                                X = X < 0 ? 0 : (X >= render_state.screen_width ? (i32)(render_state.screen_width - 1) : X );
-                                x = (u16)X;
-
-                                i32 Y = (i32)(radii.y * 6.0f) + (i32)y;
-                                Y = Y < 0 ? 0 : (Y >= render_state.screen_height ? (i32)(render_state.screen_height - 1) : Y );
-                                y = (u16)Y;
-                                if (!init(ground_hits, wall_hit_groups, origin, x, y, mid_point, portal_index))
-                                    return false;
-
-
-
-
-                                distance = distance / radius;
-
-
-                                distance *= distance;
-                                LP.x *= distance;
-                                distance *= distance;
-                                distance *= distance;
-                                distance *= distance;
-                                distance = 1.0f - distance;
-
-
-
-                                // distance = lerp(-1.0f, enemy.intensity, distance);
-                                flare_light += 0.35f * Color(-0.25f).lerpTo(enemy.color * (enemy.intensity / LP.x), distance);
-                                // flare_light += Color(-1.0f).lerpTo(Magenta, powf((1.0f - distance) / radius, 4.0f));
+                                    accum += noise * fraction / (dist * dist);
+                                }
+                            } else {
+                                accum = sphere_tracer.integrateDensity();
+                                accum *= accum;
+                                accum *= accum;
+                                accum *= 16.0f;
                             }
 
-                            // radii.x = sin(theta * 10.0f);
-                            // radii.y = cos(sigma * 10.0f);
+                            distance = sqrtf(distance) * one_over_radius;
+                            distance *= distance;
+                            distance *= distance;
+                            distance *= distance;
+                            distance *= distance;
+                            distance = 1.0f - distance;
 
-                            // radii.x = sin(radii.x);
-                            // radii.y = sin(radii.y);
+                            flare_light += 0.35f * Color(-0.25f).lerpTo(point_light.color * (point_light.intensity * accum), distance);
+                            // near = near.normalized();
+                            // far = far.normalized();
+                            radii += (1.0f + V.dot(near))*3.0f;
+                            // radii.x *= render_state.noise(near * 5.0f);
+                            // radii.y *= render_state.noise(far * 5.0f);
+                            radii *= 9.0f;
 
-                            // radii *= 0.25f;
-                            // radii += 0.75f;
+                            i32 X = (i32)radii.x + (i32)x;
+                            X = X < 0 ? 0 : (X >= render_state.screen_width ? (i32)(render_state.screen_width - 1) : X );
+                            x = (u16)X;
 
-                            // flare_light.r = radii.x *0.5f + 0.5f;//sin((asin(LP.y) + pi) * 20.0f) *0.5f + 0.5f;//(LP * 0.5f + 0.5f).toColor();
-                            // flare_light.g = radii.y *0.5f + 0.5f;
-                            // radii += sincos;
-                            //
-
-
-
-
-                            // distance = sqrtf(distance);
-                            // if (distance < radii.x) {
-                                // flare_light = radii.x;//(LP * 0.5f + 0.5f).toColor();
-                            // }
-                            // Color color = point_light.enemyColor(LP);
-                            // f32 radius = LP ;// color.r + color.b + color.g;
-                            // radius *= -1.2f;
-                            // if (distance < (radius * radius)) {
-                                // distance = sqrtf(distance);
-                                // f32 flare_intensity = (radius - distance) / radius;
-                                // flare_light += color * point_light.intensity * flare_intensity;
-                            // }
+                            i32 Y = (i32)radii.y + (i32)y;
+                            Y = Y < 0 ? 0 : (Y >= render_state.screen_height ? (i32)(render_state.screen_height - 1) : Y );
+                            y = (u16)Y;
+                            if (!init(ground_hits, wall_hit_groups, origin, x, y, mid_point, portal_index))
+                                return false;
                         }
                     }
                 }
+
+                if (!in_enemy && (render_state.flags & VOLUMETRIC) && render_state.step_count && i >= render_state.light_count) {
+                    vec3 step = (P - Ro) * fraction;
+                    vec3 RP = Ro + step * 0.5f;
+                    f32 accum = 0.0f;
+                    for (u8 k = 0; k < render_state.step_count; k++, RP += step) {
+                        if ((render_state.flags & VOLUMETRIC_SHADOWS)) {
+                            L2d = {point_light.position.x - RP.x, point_light.position.z - RP.z};
+                            ray.update({RP.x, RP.z}, L2d, ray.forward);
+                            if (rayHit(edges, columns))
+                                continue;
+                        }
+
+                        vec3 RP_local = RP - point_light.position;
+                        f32 dist = RP_local.squaredLength();
+                        f32 noise = render_state.noise(RP_local * (17.0f / sqrtf(dist)));
+                        noise *= noise;
+                        noise *= noise;
+                        noise *= noise;
+                        noise *= noise;
+
+                        accum += noise * 27.0f * fraction / dist;
+                    }
+                    flare_light += point_light.color * (point_light.intensity * accum);
+                }
             }
         }
+
+        V = -V;
 
         portal_render_data.init(portals.areBothActive());
         portal = nullptr;
@@ -362,11 +385,7 @@ struct PixelShader {
         return true;
     }
 
-    INLINE_XPU Color render(
-        const WallHit& wall_hit,
-        const Slice<TileEdge>& edges,
-        const Slice<Circle>& columns,
-        const Portals& portals) {
+    INLINE_XPU Color render(const WallHit& wall_hit) {
         Color pixel = Magenta;
         if (render_state.render_mode == RenderMode_Beauty ||
             render_state.render_mode == RenderMode_Color)
@@ -469,14 +488,15 @@ struct PixelShader {
                         UNTEXTURED_FLOOR_COLOR :
                         UNTEXTURED_WALL_COLOR)); break;
             default: {
-                Ray ray;
                 Color light = Black;
                 if (portal)
                     portal_render_data.updatePixel(pixel, portal->color);
 
-                brdf = (BRDFType)(render_state.flags & BRDF_MASK);
-                if (brdf == BRDF_GGX) NdotV = clampedValue(N.dot(V));
-                else if (brdf == BRDF_Phong) R = (-V).reflectedAround(N);
+                // brdf = (BRDFType)(render_state.flags & BRDF_MASK);
+                // if (brdf == BRDF_GGX)
+                    NdotV = clampedValue(N.dot(V));
+                // else if (brdf == BRDF_Phong)
+                    // R = (-V).reflectedAround(N);
 
                 u8 iterations = portal_render_data.has_both ? 3 : 1;
                 for (u8 j = 0; j < iterations; j++) {
@@ -485,15 +505,13 @@ struct PixelShader {
                             i < render_state.light_count ?
                             render_state.lights[i].position :
                             render_state.enemies[i - render_state.light_count].position};
-                        vec2 L2d;
                         u16 light_portal_edge_id = INVALID_EDGE_ID;
                         if (i < render_state.light_count && j > 0) {
                             L = (j == 2 ? render_state.lights_through_portal_to[i] : render_state.lights_through_portal_from[i]) - P;
                             const Portal& light_portal{j == 1 ? portals.to : portals.from};
                             light_portal_edge_id = light_portal.edge_id;
-                            L2d = vec2{L.x, L.z};
-                            ray.update(vec2{P.x, P.z}, L2d, ray.forward);
 
+                            prepareRayCast();
                             bool light_ray_goes_through_light_portal = false;
                             if (ray.intersectsWithEdge(edges.data[light_portal.edge_id])) {
                                 vec3 P2 = P + L * ((ray.hit.position - ray.origin).length() / L2d.length());
@@ -507,30 +525,12 @@ struct PixelShader {
                         } else L = point_light_position - P;
 
                         if (render_state.flags & CAST_SHADOWS) {
-                            if (j == 0) {
-                                L2d = vec2{L.x, L.z};
-                                ray.update(vec2{P.x, P.z}, L2d, ray.forward);
-                            } else ray.hit.init();
-                            f32 closest_hit_distance = 1000000.0f;
+                            if (j == 0)
+                                prepareRayCast();
+                            else
+                                ray.hit.init();
 
-                            const f32 distance_2d_squared = L2d.squaredLength();
-                            for (u16 edge_id = 0; edge_id < (u16)edges.size; edge_id++) {
-                                if (j > 0 && edge_id == light_portal_edge_id)
-                                    continue;
-
-                                if (ray.intersectsWithEdge(edges.data[edge_id])) {
-                                    ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
-                                    if (ray.hit.distance < closest_hit_distance)
-                                        closest_hit_distance = ray.hit.distance;
-                                }
-                            }
-
-                            ray.hit.distance  = closest_hit_distance;
-
-                            for (u8 c = 0; c < (u8)columns.size; c++)
-                                ray.intersectsWithCircle(columns[c]);
-
-                            if (ray.hit.distance < distance_2d_squared)
+                            if (rayHit(edges, columns, j > 0 ? light_portal_edge_id : INVALID_EDGE_ID))
                                 continue;
                         }
 
@@ -546,29 +546,38 @@ struct PixelShader {
                         f32 Fs = 0.0f;
                         f32 F = 0.0f;
 
-                        if (brdf == BRDF_GGX) {
+                        // if (brdf == BRDF_GGX) {
                             const vec3 H = (L + V).normalized();
                             const f32 NdotH = clampedValue(N.dot(H));
                             F = schlickFresnel(clampedValue(H.dot(L)), 0.04f);
                             Fs = GGX(roughness, NdotL, NdotV, NdotH);
-                        } else if (brdf != BRDF_Lambert) {
-                            F = roughness;
-                            f32 exponent = 16.0f;
-                            f32 specular_factor = 0.0f;
-                            if (brdf == BRDF_Phong) {
-                                exponent = 4.0f;
-                                specular_factor = clampedValue(R.dot(L));
-                            } else { // BLINN
-                                specular_factor = clampedValue(N.dot((L + V).normalized()));
-                            }
-                            if (specular_factor > 0.0f)
-                                Fs = powf(specular_factor, exponent);
-                        }
+                        // } else if (brdf != BRDF_Lambert) {
+                        //     F = roughness;
+                        //     f32 exponent = 16.0f;
+                        //     f32 specular_factor = 0.0f;
+                        //     if (brdf == BRDF_Phong) {
+                        //         exponent = 4.0f;
+                        //         specular_factor = clampedValue(R.dot(L));
+                        //     } else { // BLINN
+                        //         specular_factor = clampedValue(N.dot((L + V).normalized()));
+                        //     }
+                        //     if (specular_factor > 0.0f)
+                        //         Fs = powf(specular_factor, exponent);
+                        // }
 
-                        const Color color = (
-                            i < render_state.light_count ?
-                            render_state.lights[i].color :
-                            render_state.enemies[i - render_state.light_count].enemyColor(L, P, render_state.time));
+                        Color color = render_state.lights[i].color;
+                        if (i >= render_state.light_count) {
+                            color = render_state.enemies[i - render_state.light_count].color;
+                            vec3 LP = P - point_light_position;
+                            f32 dist = LP.squaredLength();
+                            f32 noise = render_state.noise(LP * (17.0f / sqrtf(dist)));
+                            noise *= noise;
+                            noise *= noise;
+                            noise *= noise;
+                            noise = 2.0f * noise - 1.0f;
+                            noise = 29.0f + 27.0f * noise;
+                            color *= noise;
+                        }
                         light += color * Li * NdotL * lerp(Fs, ONE_OVER_PI, F);
                     }
                 }
@@ -597,35 +606,32 @@ struct PixelShader {
     INLINE_XPU Color shade(
         const GroundHit* ground_hits,
         const WallHitGroup* wall_hit_groups,
-        const Portals& portals,
-        const Slice<TileEdge>& edges,
-        const Slice<Circle>& columns,
         const vec2& position,
         u16 x,
         u16 y,
         i32 mid_point) {
-        if (!prepare(ground_hits, wall_hit_groups, portals, position, x, y, mid_point))
+        if (!prepare(ground_hits, wall_hit_groups, position, x, y, mid_point))
             return Magenta;
 
         const WallHitGroup& wall_hit_group{wall_hit_groups[x]};
 
         Color pixel = Black;
         if (!(portal_render_data.render_through && !portal_render_data.blend))
-            pixel = render(wall_hit_group.main_hit, edges, columns, portals);
+            pixel = render(wall_hit_group.main_hit);
 
         if (portal_render_data.render_through) {
             f32 portal_blend_factor = portal_render_data.blend_factor;
             f32 pixel_blend_factor = 1.0f - portal_blend_factor;
             pixel *= pixel_blend_factor;
 
-            PixelShader pixel_shader_through_portal{render_data, render_state};
+            PixelShader pixel_shader_through_portal{render_data, render_state, edges, columns, portals};
             pixel_shader_through_portal.portal_render_data = portal_render_data;
             for (u8 p = 0; p < MAX_PORTAL_DEPTH && pixel_shader_through_portal.portal_render_data.render_through; p++) {
                 const WallHit& portal_wall_hit{wall_hit_group.portal_hits[p]};
                 if (!portal_wall_hit.isValid())
                     break;
 
-                if (!pixel_shader_through_portal.prepare(ground_hits, wall_hit_groups, portals, position, x, y, mid_point, p)) {
+                if (!pixel_shader_through_portal.prepare(ground_hits, wall_hit_groups, position, x, y, mid_point, p)) {
                     pixel += Color(Magenta) * portal_blend_factor;
                     break;
                 }
@@ -640,7 +646,7 @@ struct PixelShader {
                     if (p < (MAX_PORTAL_DEPTH - 1))
                         pixel_blend_factor *= 1.0f - pixel_shader_through_portal.portal_render_data.blend_factor;
 
-                    pixel += pixel_blend_factor * pixel_shader_through_portal.render(portal_wall_hit, edges, columns, portals);
+                    pixel += pixel_blend_factor * pixel_shader_through_portal.render(portal_wall_hit);
                 }
 
                 portal_blend_factor *= pixel_shader_through_portal.portal_render_data.blend_factor;

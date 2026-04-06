@@ -238,15 +238,13 @@ struct Engine {
 
         torch.flicker(torch_light_color, torch_light_intensity, time);
 
-        Enemy& enemy{render_state.enemies[0]};
+        PointLight& enemy{render_state.enemies[0]};
         enemy.position = vec3{12.0f, 0.0f, 3.0f};
         enemy.position.y += sinf(time) * 0.3f + 0.1f;
-        enemy.sincos.x = cos(time * 2.0f);
-        enemy.sincos.y = sinf(time * 3.0f);
         enemy.color = Magenta;
         enemy.color *= 0.2f;
-        enemy.color.r -= enemy.sincos.y * 0.1f + 0.05f;
-        enemy.color.b -= enemy.sincos.x * 0.05f - 0.1f;
+        enemy.color.r -= sinf(time * 3.0f) * 0.1f + 0.05f;
+        enemy.color.b -= cos(time * 2.0f) * 0.05f - 0.1f;
         enemy.intensity = 1.0f;
 
         render_state.enemy_count = 1;

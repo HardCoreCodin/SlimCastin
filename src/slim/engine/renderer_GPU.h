@@ -55,13 +55,10 @@ __global__ void d_render(const RayCast raycast, const RenderState render_state) 
     const u16 x = (u16)(i % raycast.screen_width);
     const u16 y = (u16)(i / raycast.screen_width);
 
-    PixelShader pixel_shader{d_render_data, render_state};
+    PixelShader pixel_shader{d_render_data, render_state, d_edges, d_columns, raycast.portals};
     const Pixel pixel = pixel_shader.shade(
         d_hits.ground_hits,
         d_hits.wall_hits,
-        raycast.portals,
-        d_edges,
-        d_columns,
         raycast.position,
         x,
         y,

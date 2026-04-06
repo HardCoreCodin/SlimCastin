@@ -115,6 +115,11 @@ struct Renderer : RayCast {
         if (useGPU) {
             downloadWallHits(wall_hits, screen_width);
             useGPU = false;
+            if (render_state.step_count > 4)
+                render_state.step_count = 4;
+
+            render_state.flags = render_state.flags & ~VOLUMETRIC;
+            render_state.flags = render_state.flags & ~VOLUMETRIC_SHADOWS;
         } else {
             uploadWallHits(wall_hits, screen_width);
             uploadColumns(tile_map.columns);
@@ -159,16 +164,13 @@ struct Renderer : RayCast {
     }
 
     void renderOnCPU(u32* window_content, const TileMap& tile_map) {
-        PixelShader pixel_shader{render_data, render_state};
+        PixelShader pixel_shader{render_data, render_state, tile_map.edges, tile_map.columns, portals};
         u32 offset = 0;
         for (u16 y = 0; y < screen_height; y++) {
             for (u16 x = 0; x < screen_width; x++, offset++) {
                 window_content[offset] = pixel_shader.shade(
                     ground_hits,
                     wall_hits,
-                    portals,
-                    tile_map.edges,
-                    tile_map.columns,
                     position,
                     x,
                     y,
