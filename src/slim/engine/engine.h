@@ -5,95 +5,121 @@
 #include "../scene/camera.h"
 
 
+struct Movable {
+    vec3 position, forward;
+    f32 spawned_time;
+
+    void init(const vec2 tile_map_position, const vec2 tile_map_forward, const f32 up_aim, const f32 time) {
+        position.x = tile_map_position.x;
+        position.z = tile_map_position.y;
+        position.y = 0.0f;
+
+        forward.x = tile_map_forward.x;
+        forward.z = tile_map_forward.y;
+        forward.y = up_aim;
+        forward = forward.normalized();
+
+        spawned_time = time;
+    }
+
+    void updatePosition(const f32 travel) {
+        position += forward * travel;
+    }
+};
+
+
 struct Engine {
-    RenderData &render_data;
-    RenderState &render_state;
+    TileMap tile_map;
+    Camera camera{{0, 0 * DEG_TO_RAD, 0}, {13, 0, 3}};
+    Renderer renderer{camera, tile_map.columns, tile_map.edges};
 
-    Renderer renderer;
+    RenderData& render_data{renderer.render_data};
+	RenderState& render_state{renderer.render_state};
 
-    Engine() :
-        render_data{renderer.render_data},
-        render_state{renderer.render_state}
-    {}
+    Edit& edit_mode{render_state.edit};
 
-    void init(TileMap& tile_map, const RenderData &map_render_data, const Dimensions& dim, Camera& camera) {
-        renderer.init(map_render_data);
-        uploadEdges(tile_map.edges);
-        onMove(camera, tile_map);
-        onResize(dim.width, dim.height, camera, tile_map);
-    }
-
-    void render(u32* window_content, const TileMap& tile_map) {
-        renderer.render(window_content, tile_map);
-    }
-
-    struct Projectile {
-        vec3 position, forward;
-        f32 spawned_time;
-
-        void init(const vec2 tile_map_position, const vec2 tile_map_forward, const f32 up_aim, const f32 time) {
-            position.x = tile_map_position.x;
-            position.z = tile_map_position.y;
-            position.y = 0.0f;
-
-            forward.x = tile_map_forward.x;
-            forward.z = tile_map_forward.y;
-            forward.y = up_aim;
-            forward = forward.normalized();
-
-            spawned_time = time;
-        }
-
-        void updatePosition(const f32 travel) {
-            position += forward * travel;
-        }
-    };
-    Projectile projectiles[MAX_POINT_LIGHTS];
+    Movable projectiles[MAX_POINT_LIGHTS];
+    Movable enemies[MAX_ENEMIES];
     u8 projectile_count = 0;
 
     Color torch_light_color{1.0f, 0.6f, 0.35f};
     f32 torch_light_intensity = 4.0f;
 
-    bool adding_column = false;
-    bool adding_tiles = false;
-    bool removing_tiles = false;
+    int dragged_enemy_index = -1;
+    int dragged_column_index = -1;
+    int added_column_index = -1;
+    int ray_hit_enemy = -1;
 
-    void addLightProjectile(const f32 time, const Color color) {
-        Projectile& projectile{projectiles[projectile_count++]};
+    bool adding = false;
+    bool removing = false;
+    bool moving = false;
+
+    vec2 edit_offset{0.0f, 0.0f};
+
+    void init() {
+        renderer.init();
+        uploadEdges(tile_map.edges);
+        onMove();
+        renderer.onResize();
+    }
+
+    void render(u32* window_content) {
+        renderer.render(window_content);
+    }
+
+    void addLightProjectile(const Color color) {
+        Movable& projectile{projectiles[projectile_count++]};
         PointLight& point_light{render_state.lights[render_state.light_count++]};
 
-        projectile.init(renderer.position, renderer.forward, renderer.up_aim, time);
+        projectile.init(renderer.position, renderer.forward, renderer.up_aim, render_state.time);
 
         point_light.position = projectile.position;
         point_light.color = color;
         point_light.intensity = torch_light_intensity * 0.25f;
     }
 
-    void fireFlare(const f32 time) {
+    void fireFlare() {
         if (render_state.light_count < (MAX_POINT_LIGHTS - 2))
-            addLightProjectile(time, torch_light_color);
+            addLightProjectile(torch_light_color);
     }
 
-    void launchPortalFrom(const f32 time) {
+    void launchPortalFrom() {
         renderer.portals.from.projectile_index = projectile_count;
-        addLightProjectile(time, renderer.portals.from.color);
+        addLightProjectile(renderer.portals.from.color);
     }
 
-    void launchPortalTo(const f32 time) {
+    void launchPortalTo() {
         renderer.portals.to.projectile_index = projectile_count;
-        addLightProjectile(time, renderer.portals.to.color);
+        addLightProjectile(renderer.portals.to.color);
     }
 
-    void updateProjectiles(const f32 time, const f32 delta_time, const TileMap& tile_map) {
+    void updateEnemies() {
+        for (int i = 0; i < render_state.enemy_count; i++) {
+            Movable& enemy{enemies[i]};
+            const f32 elapsed = enemy.spawned_time - render_state.time;
+
+            enemy.position.y = sinf(elapsed) * 0.3f + 0.1f;
+
+            PointLight& enemy_light{render_state.enemies[i]};
+            enemy_light.position = enemy.position;
+            enemy_light.color = Magenta;
+            enemy_light.color *= 0.2f;
+            enemy_light.color.r -= sinf(elapsed * 3.0f) * 0.1f + 0.05f;
+            enemy_light.color.b -= cosf(elapsed * 2.0f) * 0.05f - 0.1f;
+            enemy_light.intensity = 1.0f;
+        }
+    }
+
+    void updateProjectiles(const f32 delta_time) {
         bool need_generate_wall_hits = false;
         const vec2 start = 1.0f;
         const vec2 end = {
             (f32)(render_data.map_width - 1),
             (f32)(render_data.map_height - 1)
         };
-        for (u8 i = 0; i < projectile_count; i++) {
-            Projectile& projectile{projectiles[i]};
-            const f32 elapsed_time = time - projectile.spawned_time;
+        for (int i = 0; i < projectile_count; i++) {
+            Movable& projectile{projectiles[i]};
+            const f32 elapsed_time = render_state.time - projectile.spawned_time;
             vec3 projectile_position = projectile.position;
             projectile.updatePosition(delta_time * PROJECTILE_SPEED);
 
@@ -166,7 +192,7 @@ struct Engine {
                     if (new_portal && (
                         !other_portal->isActive() ||
                         (other_portal->position - new_projectile_position).length() > (2 * PORTAL_FINAL_RADIUS))) {
-                        new_portal->spawned_time = time;
+                        new_portal->spawned_time = render_state.time;
                         new_portal->projectile_index = INVALID_PROJECTILE_INDEX;
                         new_portal->position = new_projectile_position;
                         new_portal->edge_id = closest_hit_edge_id;
@@ -197,7 +223,7 @@ struct Engine {
                         renderer.portals.to.projectile_index = INVALID_EDGE_ID;
 
                     if (need_generate_wall_hits)
-                        renderer.generateWallHits(tile_map);
+                        renderer.generateWallHits();
 
                     break;
                 }
@@ -224,47 +250,120 @@ struct Engine {
         }
 
         if (need_generate_wall_hits)
-            renderer.generateWallHits(tile_map);
+            renderer.generateWallHits();
     }
 
-    void update(const Camera& camera, const f32 time, const f32 delta_time, const TileMap& tile_map) {
-        render_state.time = time;
-
+    void update(const f32 delta_time) {
         PointLight& torch{render_state.lights[0]};
         torch.position = vec3{renderer.position.x, 0.0f, renderer.position.y};
-        torch.position += camera.orientation.X * (sinf(time*2.7f) * 0.09f + cosf(time*2.6f) * 0.09f);
+        torch.position += camera.orientation.X * (sinf(render_state.time*2.7f) * 0.09f + cosf(render_state.time*2.6f) * 0.09f);
         torch.position += camera.orientation.Z * 0.2f;
-        torch.position.y += sinf(time * 2.0f) * 0.3f + 0.1f;
+        torch.position.y += sinf(render_state.time * 2.0f) * 0.3f + 0.1f;
 
-        torch.flicker(torch_light_color, torch_light_intensity, time);
+        torch.flicker(torch_light_color, torch_light_intensity, render_state.time);
 
-        PointLight& enemy{render_state.enemies[0]};
-        enemy.position = vec3{12.0f, 0.0f, 3.0f};
-        enemy.position.y += sinf(time) * 0.3f + 0.1f;
-        enemy.color = Magenta;
-        enemy.color *= 0.2f;
-        enemy.color.r -= sinf(time * 3.0f) * 0.1f + 0.05f;
-        enemy.color.b -= cos(time * 2.0f) * 0.05f - 0.1f;
-        enemy.intensity = 1.0f;
+        renderer.portals.update(render_state.time, tile_map.edges.data);
 
-        render_state.enemy_count = 1;
-
-        renderer.portals.update(time, tile_map.edges.data);
-
-        if (projectile_count > 0)
-            updateProjectiles(time, delta_time, tile_map);
-
-        if (renderer.portals.areBothActive())
-            renderer.updatePortalLights();
+        if (render_state.enemy_count) updateEnemies();
+        if (projectile_count) updateProjectiles(delta_time);
+        if (renderer.portals.areBothActive()) renderer.updatePortalLights();
     }
 
-    void onScreenChanged(const Camera& camera, const TileMap& tile_map) {
-        vec2 right = vec2(camera.orientation.X.x, camera.orientation.X.z).normalized();
-        vec2 forward = vec2(-camera.orientation.Z.x, -camera.orientation.Z.z).normalized();
-        renderer.onScreenChanged(tile_map, camera.focal_length, forward, right, camera.orientation.Z.y);
+    void resolveCollisionBetweenCircls(vec2& current, const f32 radius, const Circle& circle) {
+        vec2 gap = current - circle.position;
+        f32 gap_distance = gap.length();
+        if (gap_distance == 0)
+            return;
+
+        f32 distance_to_body = gap_distance - radius - circle.radius;
+        if (distance_to_body <= 0.0f)
+            current += gap * (distance_to_body / gap_distance);
     }
 
-    void onMove(Camera& camera, TileMap& tile_map) {
+    void resolveCollisionsWithRadius(vec2& position, const vec2& movement, const f32 radius, const int skip_column_id = -1, const int skip_enemy_id = -1) {
+        if (movement.x > 0.0f) {
+            i32 next_pos = (i32)(position.x + radius);
+            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+            if (next_tile.is_full) position.x = (f32)next_pos - radius;
+        } else if (movement.x < 0.0f) {
+            i32 next_pos = (i32)(position.x - radius);
+            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+            if (next_tile.is_full) position.x = (f32)(next_pos + 1) + radius;
+        }
+
+        if (movement.y < 0.0f) {
+            i32 next_pos = (i32)(position.y - radius);
+            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+            if (next_tile.is_full) position.y = (f32)(next_pos + 1) + radius;
+        } else if (movement.y > 0.0f) {
+            i32 next_pos = (i32)(position.y + radius);
+            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+            if (next_tile.is_full) position.y = (f32)next_pos - radius;
+        }
+
+        for (int i = 0; i < (i32)tile_map.columns.size; i++) {
+            if (i == skip_column_id)
+                continue;
+
+            const Circle& column{tile_map.columns.data[i]};
+
+            vec2 vector_to_column = column.position - position;
+            f32 distance_to_column = vector_to_column.length();
+            f32 min_distance_allowed = radius + column.radius;
+            if (distance_to_column < min_distance_allowed)
+                position -= (vector_to_column / distance_to_column) * (min_distance_allowed - distance_to_column);
+        }
+
+        for (int i = 0; i < render_state.enemy_count; i++)
+            if (i != skip_enemy_id)
+                resolveCollisionBetweenCircls(position, radius, {{enemies[i].position.x, enemies[i].position.z}, 0.5f});
+    }
+
+    void closestHitByRayCast(const vec2 origin, const vec2 direction, const bool skip) {
+        ray_hit_enemy = -1;
+        renderer.castRay(origin, direction, direction, tile_map.edges, tile_map.columns, false);
+        if (edit_mode == Edit::Walls)
+            return;
+
+        int skip_column_id = skip ? (edit_mode == Edit::Columns ? (adding ? added_column_index : dragged_column_index) : -1) : -1;
+        for (int i = 0; i < (u8)tile_map.columns.size; i++)
+            if (i != skip_column_id && renderer.ray.intersectsWithCircle(tile_map.columns[i]))
+                renderer.ray.hit.column_id = i;
+
+        int skip_enemy_id = skip ? (edit_mode == Edit::Enemies ? dragged_enemy_index : -1) : -1;
+        for (int i = 0; i < render_state.enemy_count; i++)
+            if (i != skip_enemy_id && renderer.ray.intersectsWithCircle({{enemies[i].position.x, enemies[i].position.z}, 0.5f}))
+                ray_hit_enemy = i;
+
+        renderer.ray.hit.distance = sqrtf(renderer.ray.hit.distance);
+        if (ray_hit_enemy != -1) {
+            renderer.ray.hit.column_id = INVALID_COLUMN_ID;
+            renderer.ray.hit.edge_id = INVALID_EDGE_ID;
+            renderer.ray.hit.position = renderer.ray.origin + renderer.ray.direction * renderer.ray.hit.distance;
+        } else if (renderer.ray.hit.column_id != INVALID_COLUMN_ID)
+            renderer.ray.hit.position = renderer.ray.origin + renderer.ray.direction * renderer.ray.hit.distance;
+    }
+
+    void displaceByRayCast(vec2& current, const vec2 next, const f32 radius, const bool skip) {
+        vec2 movement = next - current;
+        const f32 distance = movement.length();
+        if (distance == 0.0f)
+            return;
+        const vec2 direction = movement / distance;
+        closestHitByRayCast(current, direction, skip);
+
+        renderer.ray.hit.distance -= 0.001f;
+        if (renderer.ray.hit.distance < distance)
+            movement *= renderer.ray.hit.distance / distance;
+
+        current += movement;
+
+        int skip_column_id = skip ? (edit_mode == Edit::Columns ? (adding ? added_column_index : dragged_column_index) : -1) : -1;
+        int skip_enemy_id = skip ? (edit_mode == Edit::Enemies ? dragged_enemy_index : -1) : -1;
+        resolveCollisionsWithRadius(current, movement, radius, skip_column_id, skip_enemy_id);
+    }
+
+    void onMove() {
         vec2 position = vec2(camera.position.x, camera.position.z);
         vec2 movement = position - renderer.position;
 
@@ -300,62 +399,29 @@ struct Engine {
             camera.orientation.Y.z = up.y;
             camera.orientation.Z.x = -forward.x;
             camera.orientation.Z.z = -forward.y;
-        } else if (!portal) {
-            if (movement.x > 0.0f) {
-                i32 next_pos = (i32)(position.x + BODY_RADIUS);
-                const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
-                if (next_tile.is_full) position.x = (f32)next_pos - BODY_RADIUS;
-            } else if (movement.x < 0.0f) {
-                i32 next_pos = (i32)(position.x - BODY_RADIUS);
-                const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
-                if (next_tile.is_full) position.x = (f32)(next_pos + 1) + BODY_RADIUS;
-            }
-
-            if (movement.y < 0.0f) {
-                i32 next_pos = (i32)(position.y - BODY_RADIUS);
-                const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
-                if (next_tile.is_full) position.y = (f32)(next_pos + 1) + BODY_RADIUS;
-            } else if (movement.y > 0.0f) {
-                i32 next_pos = (i32)(position.y + BODY_RADIUS);
-                const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
-                if (next_tile.is_full) position.y = (f32)next_pos - BODY_RADIUS;
-            }
-
-            for (u32 i = 0; i < tile_map.columns.size; i++) {
-                const Circle& column{tile_map.columns.data[i]};
-
-                vec2 vector_to_column = column.position - position;
-                f32 distance_to_column = vector_to_column.length();
-                f32 min_distance_allowed = BODY_RADIUS + column.radius;
-                if (distance_to_column < min_distance_allowed)
-                    position -= (vector_to_column / distance_to_column) * (min_distance_allowed - distance_to_column);
-            }
-        }
+        } else if (!portal)
+            resolveCollisionsWithRadius(position, movement, BODY_RADIUS);
 
         camera.position.x = position.x;
         camera.position.z = position.y;
         renderer.position = position;
         if (teleport)
-            onScreenChanged(camera, tile_map);
+            renderer.onScreenChanged();
     }
 
-    void onResize(u16 width, u16 height, const Camera& camera, const TileMap& tile_map) {
-        renderer.screen_height = render_state.screen_height = (height >> 1) << 1;
-        renderer.screen_width = render_state.screen_width = width;
-        onScreenChanged(camera, tile_map);
-
-        renderer.prior_screen_height = renderer.screen_height;
-    }
-
-    void onStopEditing() {
+    void stopEditing() {
+        edit_mode = Edit::None;
         render_state.hovered_pos = 0.0f;
-        adding_column = false;
-        adding_tiles = false;
-        removing_tiles = false;
+        adding = false;
+        removing = false;
+        moving = false;
+        dragged_enemy_index = -1;
+        dragged_column_index = -1;
+        added_column_index = -1;
     }
 
-    void onEditHover(TileMap& tile_map, vec2i mouse_pos, bool crete_new_column = false) {
-        if ((render_state.flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0 ||
+    void edit(vec2i mouse_pos) {
+        if (edit_mode == Edit::None ||
             mouse_pos.x < 0 ||
             mouse_pos.y < 0 ||
             mouse_pos.x >= renderer.screen_width ||
@@ -366,105 +432,192 @@ struct Engine {
         const WallHitGroup& wall_hit_group{renderer.wall_hits[mouse_pos.x]};
         const GroundHit& ground_hit{renderer.ground_hits[mouse_pos.y]};
 
-        const vec2 position = renderer.position + wall_hit_group.main_hit.ray_direction * ground_hit.z;
-        const vec2 start = 1.0f;
-        const vec2 end = {
-            (f32)(render_data.map_width - 1),
-            (f32)(render_data.map_height - 1)
-        };
-        if (!inRange(start, position, end)) {
-            return;
-        }
+        const vec2 ground_position = renderer.position + wall_hit_group.main_hit.ray_direction * ground_hit.z;
+        const f32 ground_position_distance = (ground_position - renderer.position).length();
 
-        render_state.hovered_pos = position;
+        const vec2 direction = renderer.first_ray_direction + renderer.right_step * mouse_pos.x;
+        closestHitByRayCast(renderer.position, direction, true);
+        int closest_enemy_id = ray_hit_enemy;
+        int closest_column_id = renderer.ray.hit.column_id == INVALID_COLUMN_ID ? -1 : renderer.ray.hit.column_id;
+        const vec2 closest_hit_position = renderer.ray.hit.position;
+        const f32 closest_hit_distance = (renderer.ray.hit.position - renderer.position).length();
 
-        if (crete_new_column) {
-            f32 distance_to_body = (position - renderer.position).length() - INITIAL_COLUMN_RADIUS - BODY_RADIUS;
-            if (distance_to_body > 0.0f) {
-                Circle& column{tile_map.columns[tile_map.columns.size++]};
-                column.position = position;
-                column.radius = INITIAL_COLUMN_RADIUS;
-                if (renderer.useGPU) uploadColumns(tile_map.columns);
-                renderer.generateWallHits(tile_map);
-                render_state.hovered_pos = 0.0f;
-            }
-        } else if (adding_column) {
-            Circle& column{tile_map.columns[tile_map.columns.size - 1]};
-            f32 new_radius = (position - column.position).length();
-            f32 distance_to_body = (position - renderer.position).length() - new_radius - BODY_RADIUS;
-            if (distance_to_body <= 0.0f) new_radius += distance_to_body;
-            new_radius = fmaxf(0.1f, new_radius);
-            if (new_radius != column.radius) {
-                column.radius = new_radius;
-                if (renderer.useGPU) uploadColumns(tile_map.columns);
-                renderer.generateWallHits(tile_map);
-            }
-            render_state.hovered_pos = 0.0f;
-        } else {
-            Tile& tile{tile_map.cells[(i32)position.y][(i32)position.x]};
-            bool tile_changed = false;
-            if (adding_tiles) {
-                if (!tile.is_full &&
-                    !((i32)position.x == (i32)renderer.position.x &&
-                      (i32)position.y == (i32)renderer.position.y)) {
+        render_state.hovered_pos = closest_hit_distance < ground_position_distance ? closest_hit_position : ground_position;
+
+        switch (edit_mode) {
+            case Edit::Walls: {
+                Tile& tile{tile_map.cells[(i32)render_state.hovered_pos.y][(i32)render_state.hovered_pos.x]};
+                bool tile_changed = false;
+                if (adding) {
+                    if (!tile.is_full &&
+                        !((i32)render_state.hovered_pos.x == (i32)renderer.position.x &&
+                          (i32)render_state.hovered_pos.y == (i32)renderer.position.y)) {
+                        tile_changed = true;
+                        tile.is_full = true;
+                        tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 12;
+                    }
+                } else if (removing && tile.is_full) {
                     tile_changed = true;
-                    tile.is_full = true;
-                    tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 12;
+                    tile.is_full = false;
                 }
-            } else if (removing_tiles && tile.is_full) {
-                tile_changed = true;
-                tile.is_full = false;
+
+                if (tile_changed) {
+                    TileEdge portal_from_edge;
+                    TileEdge portal_to_edge;
+                    if (renderer.portals.from.isActive())
+                        portal_from_edge = tile_map.edges[renderer.portals.from.edge_id];
+                    if (renderer.portals.to.isActive())
+                        portal_to_edge = tile_map.edges[renderer.portals.to.edge_id];
+
+                    tile_map.generateEdges();
+
+                    if (renderer.portals.from.isActive() ||
+                        renderer.portals.to.isActive()) {
+                        for (u16 edge_id = 0; edge_id < tile_map.edges.size; ++edge_id) {
+                            const TileEdge& edge = tile_map.edges[edge_id];
+                            if (renderer.portals.from.isActive() && portal_from_edge.overlaps(edge))
+                                renderer.portals.from.edge_id = edge_id;
+                            if (renderer.portals.to.isActive() && portal_to_edge.overlaps(edge))
+                                renderer.portals.to.edge_id = edge_id;
+                        }
+                    }
+
+                    if (renderer.useGPU) uploadEdges(tile_map.edges);
+                    renderer.generateWallHits();
+                }
+                break;
             }
+            case Edit::Columns: {
+                if (adding) {
+                    if (tile_map.columns.size < MAX_COLUMN_COUNT) {
+                        if (added_column_index == -1) {
+                            resolveCollisionsWithRadius(render_state.hovered_pos, renderer.ray.direction, INITIAL_COLUMN_RADIUS);
 
-            if (tile_changed) {
-                TileEdge portal_from_edge;
-                TileEdge portal_to_edge;
-                if (renderer.portals.from.isActive())
-                    portal_from_edge = tile_map.edges[renderer.portals.from.edge_id];
-                if (renderer.portals.to.isActive())
-                    portal_to_edge = tile_map.edges[renderer.portals.to.edge_id];
+                            f32 distance_to_body = (render_state.hovered_pos - renderer.position).length() - INITIAL_COLUMN_RADIUS - BODY_RADIUS;
+                            if (distance_to_body > 0.0f) {
+                                added_column_index = tile_map.columns.size++;
+                                Circle& column{tile_map.columns[added_column_index]};
+                                column.position = render_state.hovered_pos;
+                                column.radius = INITIAL_COLUMN_RADIUS;
+                                if (renderer.useGPU) uploadColumns(tile_map.columns);
+                                renderer.generateWallHits();
+                            }
+                        }
 
-                tile_map.generateEdges();
+                        if (added_column_index != -1) {
+                            Circle& column{tile_map.columns[added_column_index]};
+                            const vec2 movement = render_state.hovered_pos - column.position;
+                            if (movement.x != 0.0f || movement.y != 0.0f)
+                                resolveCollisionsWithRadius(render_state.hovered_pos, movement, column.radius, added_column_index);
 
-                if (renderer.portals.from.isActive() ||
-                    renderer.portals.to.isActive()) {
-                    for (u16 edge_id = 0; edge_id < tile_map.edges.size; ++edge_id) {
-                        const TileEdge& edge = tile_map.edges[edge_id];
-                        if (renderer.portals.from.isActive() && portal_from_edge.overlaps(edge))
-                            renderer.portals.from.edge_id = edge_id;
-                        if (renderer.portals.to.isActive() && portal_to_edge.overlaps(edge))
-                            renderer.portals.to.edge_id = edge_id;
+                            f32 new_radius = (render_state.hovered_pos - column.position).length();
+                            f32 distance_to_body = (render_state.hovered_pos - renderer.position).length() - new_radius - BODY_RADIUS;
+                            if (distance_to_body <= 0.0f) new_radius += distance_to_body;
+                            new_radius = fmaxf(0.1f, new_radius);
+                            if (new_radius != column.radius) {
+                                column.radius = new_radius;
+                                if (renderer.useGPU) uploadColumns(tile_map.columns);
+                                renderer.generateWallHits();
+                            }
+                            render_state.hovered_pos = column.position;
+                        }
+                    } else adding = false;
+                } else if (moving) {
+                    if (dragged_column_index == -1 && closest_column_id != -1) {
+                        dragged_column_index = closest_column_id;
+                        Circle& column{tile_map.columns[dragged_column_index]};
+                        edit_offset = render_state.hovered_pos - column.position;
+                        render_state.hovered_pos = column.position;
+                    } else if (dragged_column_index != -1) {
+                        Circle& column{tile_map.columns[dragged_column_index]};
+
+                        displaceByRayCast(column.position, render_state.hovered_pos - edit_offset, column.radius, true);
+                        resolveCollisionBetweenCircls(column.position, column.radius, {renderer.position, BODY_RADIUS});
+                        render_state.hovered_pos = column.position;
+                        if (renderer.useGPU) uploadColumns(tile_map.columns);
+                        renderer.generateWallHits();
+                    }
+                } else if (removing && tile_map.columns.size > 0 & closest_column_id != -1) {
+                    removing = false;
+                    render_state.hovered_pos = tile_map.columns[closest_column_id].position;
+                    if (tile_map.columns.size > 1)
+                        tile_map.columns[closest_column_id] = tile_map.columns[tile_map.columns.size - 1];
+                    tile_map.columns.size--;
+                    if (renderer.useGPU) uploadColumns(tile_map.columns);
+                    renderer.generateWallHits();
+                }
+                break;
+            }
+            case Edit::Enemies: {
+                if (adding) {
+                    if (render_state.enemy_count < MAX_ENEMIES) {
+                        resolveCollisionsWithRadius(render_state.hovered_pos, renderer.ray.direction, 0.5f);
+
+                        f32 distance_to_body = (render_state.hovered_pos - renderer.position).length() - 0.5f - BODY_RADIUS;
+                        if (distance_to_body > 0.0f) {
+                            dragged_enemy_index = render_state.enemy_count++;
+                            enemies[dragged_enemy_index].position = vec3{render_state.hovered_pos.x, 0.0f, render_state.hovered_pos.y};
+                            edit_offset = 0.0f;
+                            adding = false;
+                            moving = true;
+                        }
+                    }
+
+                     // =
+
+                    // bool can_add = render_state.enemy_count < MAX_ENEMIES && !(
+                        // position.x <= 1.25f ||
+                        // position.x >= ((f32)tile_map.width - 1.75f) ||
+                        // position.y <= 1.25f ||
+                        // position.y >= ((f32)tile_map.height - 1.75f) ||
+                        // tile_map.cells[(i32)position.y][(i32)position.x].is_full ||
+                        // tile_map.cells[(i32)(position.y + 0.25f)][(i32)position.x].is_full ||
+                        // tile_map.cells[(i32)(position.y - 0.25f)][(i32)position.x].is_full ||
+                        // tile_map.cells[(i32)position.y][(i32)(position.x + 0.25f)].is_full ||
+                        // tile_map.cells[(i32)position.y][(i32)(position.x - 0.25f)].is_full ||
+                        // tile_map.cells[(i32)(position.y + 0.25f)][(i32)(position.x + 0.25f)].is_full ||
+                        // tile_map.cells[(i32)(position.y - 0.25f)][(i32)(position.x + 0.25f)].is_full ||
+                        // tile_map.cells[(i32)(position.y + 0.25f)][(i32)(position.x - 0.25f)].is_full ||
+                        // tile_map.cells[(i32)(position.y - 0.25f)][(i32)(position.x - 0.25f)].is_full);
+
+                    // for (u32 i = 0; i < tile_map.columns.size; i++)
+                    //     if ((tile_map.columns.data[i].position - position).length() < tile_map.columns.data[i].radius)
+                    //         return false;
+
+                    // if (render_state.enemy_count < MAX_ENEMIES && enemyCanBePlaced()) {
+                    //     dragged_enemy_index = render_state.enemy_count++;
+                    //     enemies[dragged_enemy_index].position = vec3{position.x, 0.0f, position.y};
+                    //     adding = false;
+                    //     moving = true;
+                    // }
+                } else if (dragged_enemy_index == -1 && closest_enemy_id != -1) {
+                    dragged_enemy_index = closest_enemy_id;
+                    vec2 enemy_position{enemies[closest_enemy_id].position.x, enemies[closest_enemy_id].position.z};
+                    if (moving)
+                        edit_offset = render_state.hovered_pos - enemy_position;
+                    render_state.hovered_pos = enemy_position;
+                }
+
+                if (dragged_enemy_index != -1) {
+                    if (moving) {
+                        vec2 enemy_position{enemies[dragged_enemy_index].position.x, enemies[dragged_enemy_index].position.z};
+                        displaceByRayCast(enemy_position, render_state.hovered_pos - edit_offset, 0.5f, true);
+                        resolveCollisionBetweenCircls(enemy_position, 0.5f, {renderer.position, BODY_RADIUS});
+                        enemies[dragged_enemy_index].position = vec3{enemy_position.x, 0.0f, enemy_position.y};
+                        render_state.hovered_pos = enemy_position;
+                    } else if (removing) {
+                        removing = false;
+                        if (render_state.enemy_count) {
+                            if (render_state.enemy_count > 1) {
+                                enemies[dragged_enemy_index] = enemies[render_state.enemy_count - 1];
+                                render_state.enemies[dragged_enemy_index] = render_state.enemies[render_state.enemy_count - 1];
+                            }
+                            render_state.enemy_count--;
+                        }
                     }
                 }
 
-                if (renderer.useGPU) uploadEdges(tile_map.edges);
-                renderer.generateWallHits(tile_map);
-            }
-        }
-    }
-
-    void onEditLeftMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
-        if (render_state.flags & EDITING_WALLS) {
-            onStopEditing();
-            adding_tiles = true;
-            onEditHover(tile_map, mouse_pos);
-        } else if ((render_state.flags & EDITING_COLUMNS) && (tile_map.columns.size < MAX_COLUMN_COUNT)) {
-            adding_column = true;
-            onEditHover(tile_map, mouse_pos, true);
-        }
-    }
-
-    void onEditRightMouseButtonDown(TileMap& tile_map, vec2i mouse_pos) {
-        if (render_state.flags & EDITING_WALLS) {
-            onStopEditing();
-            removing_tiles = true;
-            onEditHover(tile_map, mouse_pos);
-        } else if ((render_state.flags & EDITING_COLUMNS) && (tile_map.columns.size != 0)) {
-            const WallHit& wall_hit{renderer.wall_hits[mouse_pos.x].main_hit};
-            if (wall_hit.column_id != INVALID_COLUMN_ID) {
-                tile_map.columns[wall_hit.column_id] = tile_map.columns[--tile_map.columns.size];
-                if (renderer.useGPU) uploadColumns(tile_map.columns);
-                renderer.generateWallHits(tile_map);
+                break;
             }
         }
     }

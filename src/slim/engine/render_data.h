@@ -87,24 +87,37 @@ struct PointLight {
     }
 };
 
+
+enum class Edit : u8 {
+    None = 0,
+    Walls,
+    Columns,
+    Enemies,
+};
+
+
 struct RenderState {
     PointLight lights[MAX_POINT_LIGHTS];
-    PointLight enemies[MAX_POINT_LIGHTS / 4];
+    PointLight enemies[MAX_ENEMIES];
     vec3 lights_through_portal_from[MAX_POINT_LIGHTS];
     vec3 lights_through_portal_to[MAX_POINT_LIGHTS];
     vec2 hovered_pos;
     f32 time;
     RenderMode render_mode;
+    BRDFType brdf;
+    Edit edit;
     u16 screen_width;
     u16 screen_height;
+    u8 flags;
     u8 light_count;
     u8 enemy_count;
-    u8 flags;
     u8 step_count;
     u8 p[512];
 
     void init() {
-        flags = 0;// (u8)BRDF_GGX | USE_MAPS_MASK;
+        edit = Edit::None;
+        brdf = BRDF_GGX;
+        flags = USE_MAPS_MASK;
 #ifdef __CUDACC__
         flags |= CAST_SHADOWS | VOLUMETRIC;
         step_count = 128;
@@ -114,7 +127,8 @@ struct RenderState {
         render_mode = DEFAULT_RENDER_MODE;
         hovered_pos = 0.0f;
         light_count = 1;
-        enemy_count = 1;
+        enemy_count = 0;
+        time = 0.0f;
 
         u8 permutation[] = { 151,160,137,91,90,15,
             131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,

@@ -125,7 +125,6 @@ struct PixelShader {
     SphereTracer sphere_tracer;
     Ray ray;
     const Portal* portal;
-    // BRDFType brdf;
     Color flare_light;
     vec3 P, N, L, V, R, Ro, PortalToP;
     vec2 ground_hit_position;
@@ -546,24 +545,24 @@ struct PixelShader {
                         f32 Fs = 0.0f;
                         f32 F = 0.0f;
 
-                        // if (brdf == BRDF_GGX) {
+                        if (render_state.brdf == BRDF_GGX) {
                             const vec3 H = (L + V).normalized();
                             const f32 NdotH = clampedValue(N.dot(H));
                             F = schlickFresnel(clampedValue(H.dot(L)), 0.04f);
                             Fs = GGX(roughness, NdotL, NdotV, NdotH);
-                        // } else if (brdf != BRDF_Lambert) {
-                        //     F = roughness;
-                        //     f32 exponent = 16.0f;
-                        //     f32 specular_factor = 0.0f;
-                        //     if (brdf == BRDF_Phong) {
-                        //         exponent = 4.0f;
-                        //         specular_factor = clampedValue(R.dot(L));
-                        //     } else { // BLINN
-                        //         specular_factor = clampedValue(N.dot((L + V).normalized()));
-                        //     }
-                        //     if (specular_factor > 0.0f)
-                        //         Fs = powf(specular_factor, exponent);
-                        // }
+                        } else if (render_state.brdf != BRDF_Lambert) {
+                            F = roughness;
+                            f32 exponent = 16.0f;
+                            f32 specular_factor = 0.0f;
+                            if (render_state.brdf == BRDF_Phong) {
+                                exponent = 4.0f;
+                                specular_factor = clampedValue(R.dot(L));
+                            } else { // BLINN
+                                specular_factor = clampedValue(N.dot((L + V).normalized()));
+                            }
+                            if (specular_factor > 0.0f)
+                                Fs = powf(specular_factor, exponent);
+                        }
 
                         Color color = render_state.lights[i].color;
                         if (i >= render_state.light_count) {
@@ -586,18 +585,12 @@ struct PixelShader {
             }
         }
 
-        if (render_state.flags & EDITING_WALLS &&
+        if (render_state.edit == Edit::Walls &&
             ((i32)ground_hit_position.x == (i32)render_state.hovered_pos.x &&
              (i32)ground_hit_position.y == (i32)render_state.hovered_pos.y) ||
-            render_state.flags & EDITING_COLUMNS &&
-            (ground_hit_position - render_state.hovered_pos).squaredLength() < 0.01f) {
-            Color selection{-0.02f};
-            if (render_state.flags & EDITING_WALLS)
-                selection.g = -selection.g;
-            else
-                selection.r = -selection.r;
-
-            pixel += selection;
+            (render_state.edit == Edit::Columns || render_state.edit == Edit::Enemies) &&
+            (ground_hit_position - render_state.hovered_pos).squaredLength() < (render_state.edit == Edit::Enemies ? 0.15f : 0.02f)) {
+            pixel = pixel.lerpTo(Color(render_state.edit == Edit::Enemies ? Magenta : (render_state.edit == Edit::Walls ? Cyan : Yellow)), 0.02f);
         }
 
         return pixel;

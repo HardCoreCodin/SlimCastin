@@ -124,6 +124,20 @@ Tile* WALLS2[] = {
 
 struct DungeonCrawler : SlimApp {
 	Engine engine;
+	Navigation navigation;
+	Slice<Texture> textures_slice{textures, Texture_Count};
+
+	Camera& camera{engine.camera};
+	Renderer& renderer{engine.renderer};
+	RenderData& render_data{renderer.render_data};
+	RenderState& render_state{renderer.render_state};
+	Dimensions& dimensions{renderer.dimensions};
+    RenderMode& render_mode{render_state.render_mode};
+	Edit& edit{render_state.edit};
+	TileMap& tile_map{engine.tile_map};
+	u8& flags{render_state.flags};
+	u8& step_count{render_state.step_count};
+	f32& time{render_state.time};
 
 	bool shadows_enabled = true;
 	bool AO_map_enabled = true;
@@ -132,7 +146,7 @@ struct DungeonCrawler : SlimApp {
 
     // HUD:
     HUDLine FPS {"FPS : "};
-    HUDLine GPU {"GPU : ", "Off", "On", &engine.renderer.useGPU};
+    HUDLine GPU {"GPU : ", "Off", "On", &renderer.useGPU};
     HUDLine Mode{"Mode: ", "Beauty"};
     HUDLine VolumeSteps {"Steps: "};
     HUDLine Shadows{"Shadows: ", "Off", "On", &shadows_enabled};
@@ -141,77 +155,62 @@ struct DungeonCrawler : SlimApp {
     HUDLine Roughness{"Roughness : ", "Off", "On", &roughness_map_enabled};
     HUD hud{{7}, &FPS};
 
-
-	// Viewport:
-    Camera camera{{0, 0 * DEG_TO_RAD, 0}, {13, 0, 3}};
-    Navigation navigation;
-    Dimensions dimensions;
-
-    TileMap tile_map;
-	Slice<Texture> textures_slice{textures, Texture_Count};
-
-	RenderData render_data;
-
 	bool initted = false;
 	bool fired_flare = false;
 	bool launched_portal_from = false;
 	bool launched_portal_to = false;
 
-	f32 time = 0.0f;
-
     void OnUpdate(f32 delta_time) override {
         i32 fps = (i32)render_timer.average_frames_per_second;
         FPS.value = fps;
         FPS.value_color = fps >= 60 ? Green : (fps >= 24 ? Cyan : (fps < 12 ? Red : Yellow));
-    	i32 steps = (i32)engine.render_state.step_count;
-    	VolumeSteps.value = steps;
-    	if (engine.renderer.useGPU)
-    		VolumeSteps.value_color = steps ? (steps >= 64 ? Red : (steps >= 16 ? Yellow : Cyan)) : Grey;
+    	VolumeSteps.value = (i32)step_count;
+    	if (renderer.useGPU)
+    		VolumeSteps.value_color = step_count ? (step_count >= 64 ? Red : (step_count >= 16 ? Yellow : Cyan)) : Grey;
     	else
-    		VolumeSteps.value_color = steps ? (steps >= 8 ? Red : (steps >= 4 ? Yellow : Cyan)) : Grey;
+    		VolumeSteps.value_color = step_count ? (step_count >= 8 ? Red : (step_count >= 4 ? Yellow : Cyan)) : Grey;
 
 		bool tile_map_changed = false;
 
         if (mouse::is_captured) {
 	        navigation.update(camera, delta_time);
-        	if (navigation.moved || tile_map_changed) engine.onMove(camera, tile_map);
+        	if (navigation.moved || tile_map_changed) engine.onMove();
         	if (navigation.moved || tile_map_changed ||
 	            navigation.turned ||
-	            navigation.zoomed) engine.onScreenChanged(camera, tile_map);
-        } else engine.onEditHover(tile_map, {mouse::pos_x, mouse::pos_y});
+	            navigation.zoomed) renderer.onScreenChanged();
+        } else engine.edit({mouse::pos_x, mouse::pos_y});
     	navigation.moved = navigation.turned = navigation.zoomed = false;
 
     	time += delta_time;
 
-    	engine.update(camera, time, delta_time, tile_map);
+    	engine.update(delta_time);
 
     	if (fired_flare) {
     		fired_flare = false;
-    		engine.fireFlare(time);
+    		engine.fireFlare();
     	}
     	if (launched_portal_from) {
     		launched_portal_from = false;
-    		engine.launchPortalFrom(time);
+    		engine.launchPortalFrom();
     	}
     	if (launched_portal_to) {
     		launched_portal_to = false;
-    		engine.launchPortalTo(time);
+    		engine.launchPortalTo();
     	}
     }
 
     void OnRender() override {
-        engine.render(window::content, tile_map);
+        engine.render(window::content);
         if (hud.enabled)
             drawHUD(hud, window::content, dimensions);
     }
 
     void OnKeyChanged(u8 key, bool is_pressed) override {
-    	u8& flags{engine.render_state.flags};
-    	RenderMode& render_mode{engine.render_state.render_mode};
     	if (is_pressed) {
     		if (!mouse::is_captured) {
-    			if (key == controls::key_map::ctrl) flags |= EDITING_WALLS;
-    			if (key == controls::key_map::alt) flags |= EDITING_COLUMNS;
+    			if (key == controls::key_map::ctrl) edit = Edit::Walls;
+    			if (key == controls::key_map::alt) edit = Edit::Columns;
+    			if (key == controls::key_map::shift) edit = Edit::Enemies;
     		}
     	} else {
     		if (mouse::is_captured) {
@@ -223,16 +222,16 @@ struct DungeonCrawler : SlimApp {
     				else
     					fired_flare = true;
     			}
-    		} else {
-    			if (key == controls::key_map::ctrl) flags &= ~EDITING_WALLS;
-    			if (key == controls::key_map::alt) flags &= ~EDITING_COLUMNS;
-    			if ((flags & (EDITING_WALLS | EDITING_COLUMNS)) == 0) engine.onStopEditing();
-    		}
+    		} else if (key == controls::key_map::ctrl ||
+    			       key == controls::key_map::alt ||
+    			       key == controls::key_map::shift)
+    				engine.stopEditing();
+
     		if (key == controls::key_map::tab) hud.enabled = !hud.enabled;
-        	// if (key == 'L') flags = BRDF_Lambert | (flags & ~BRDF_MASK);
-        	// if (key == 'B') flags = BRDF_Blinn | (flags & ~BRDF_MASK);
-        	// if (key == 'X') flags = BRDF_GGX | (flags & ~BRDF_MASK);
-        	// if (key == 'P') flags = BRDF_Phong | (flags & ~BRDF_MASK);
+        	if (key == 'L') render_state.brdf = BRDF_Lambert;
+        	if (key == 'B') render_state.brdf = BRDF_Blinn;
+        	if (key == 'X') render_state.brdf = BRDF_GGX;
+        	if (key == 'P') render_state.brdf = BRDF_Phong;
         	if (key == 'O') flags = flags & USE_AO_MAP ? (flags & ~USE_AO_MAP) : (flags | USE_AO_MAP);
         	if (key == 'N') flags = flags & USE_NORMAL_MAP ? (flags & ~USE_NORMAL_MAP) : (flags | USE_NORMAL_MAP);
         	if (key == 'R') flags = flags & USE_ROUGHNESS_MAP ? (flags & ~USE_ROUGHNESS_MAP) : (flags | USE_ROUGHNESS_MAP);
@@ -243,7 +242,7 @@ struct DungeonCrawler : SlimApp {
     			else
     				flags = flags & VOLUMETRIC ? (flags & ~VOLUMETRIC) : (flags | VOLUMETRIC);
     		}
-            if (key == 'G' && USE_GPU_BY_DEFAULT) engine.renderer.toggleUseOfGPU(tile_map);
+            if (key == 'G' && USE_GPU_BY_DEFAULT) renderer.toggleUseOfGPU();
             if (key == '1') render_mode = RenderMode_Beauty;
             if (key == '2') render_mode = RenderMode_Untextured;
             if (key == '3') render_mode = RenderMode_Depth;
@@ -254,10 +253,10 @@ struct DungeonCrawler : SlimApp {
         	if (key == '8') render_mode = RenderMode_AO;
         	if (key == '9') render_mode = RenderMode_Normal;
         	if (key == '0') render_mode = RenderMode_Light;
-    		if (key == controls::key_map::up && engine.render_state.step_count < 128)
-    			engine.render_state.step_count = engine.render_state.step_count ? engine.render_state.step_count << 1 : 1;
-    		if (key == controls::key_map::down && engine.render_state.step_count)
-    			engine.render_state.step_count = engine.render_state.step_count == 1 ? 0 : engine.render_state.step_count >> 1;
+    		if (key == controls::key_map::up && step_count < 128)
+    			step_count = step_count ? step_count << 1 : 1;
+    		if (key == controls::key_map::down && step_count)
+    			step_count = step_count == 1 ? 0 : step_count >> 1;
             switch (render_mode) {
                 case RenderMode_Beauty:     Mode.value.string = "Beauty"; break;
                 case RenderMode_Untextured: Mode.value.string = "Untextured"; break;
@@ -295,10 +294,10 @@ struct DungeonCrawler : SlimApp {
         dimensions.update(width, height);
 
     	if (initted)
-    		engine.onResize(width, height, camera, tile_map);
+    		renderer.onResize();
     	else {
     		initted = true;
-    		engine.renderer.useGPU = USE_GPU_BY_DEFAULT;
+    		renderer.useGPU = USE_GPU_BY_DEFAULT;
 
     		tile_map.load(SliceFromStaticArray(Tile*, WALLS));
 
@@ -309,22 +308,21 @@ struct DungeonCrawler : SlimApp {
     		render_data.map_width = tile_map.width;
     		render_data.map_height = tile_map.height;
 
-    		engine.init(tile_map, render_data, dimensions, camera);
+    		engine.init();
     	}
     }
 
     void OnMouseButtonDown(mouse::Button &mouse_button) override {
         mouse::pos_raw_diff_x = mouse::pos_raw_diff_y = 0;
-    	if (engine.render_state.flags & (EDITING_COLUMNS | EDITING_WALLS)) {
-    		if (&mouse_button == &mouse::left_button) engine.onEditLeftMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
-    		if (&mouse_button == &mouse::right_button) engine.onEditRightMouseButtonDown(tile_map, {mouse::pos_x, mouse::pos_y});
+    	if (edit != Edit::None) {
+    		engine.adding = &mouse_button == &mouse::left_button;
+    		engine.removing = &mouse_button == &mouse::right_button;
+    		engine.moving = &mouse_button == &mouse::middle_button;
     	}
     }
 
 	void OnMouseButtonUp(mouse::Button &mouse_button) override {
-    	if (&mouse_button == &mouse::left_button ||
-			&mouse_button == &mouse::right_button)
-    		engine.onStopEditing();
+    	engine.stopEditing();
     }
 
     void OnMouseButtonDoubleClicked(mouse::Button &mouse_button) override {

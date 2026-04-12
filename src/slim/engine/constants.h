@@ -11,19 +11,16 @@
 
 #define DEFAULT_RENDER_MODE RenderMode_Beauty
 
-#define VOLUMETRIC        (1 << 0)
+#define CAST_SHADOWS       (1 << 0)
 #define VOLUMETRIC_SHADOWS (1 << 1)
-#define CAST_SHADOWS      (1 << 2)
-#define EDITING_WALLS     (1 << 3)
-#define EDITING_COLUMNS   (1 << 4)
-#define USE_ROUGHNESS_MAP (1 << 5)
-#define USE_AO_MAP        (1 << 6)
-#define USE_NORMAL_MAP    (1 << 7)
-
+#define VOLUMETRIC         (1 << 2)
+#define USE_ROUGHNESS_MAP  (1 << 3)
+#define USE_AO_MAP         (1 << 4)
+#define USE_NORMAL_MAP     (1 << 5)
 #define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
-// #define BRDF_MASK 3
 
 #define MAX_POINT_LIGHTS 16
+#define MAX_ENEMIES 4
 
 #define PORTAL_FINAL_RADIUS 0.4f
 #define PORTAL_INITIAL_RADIUS 0.1f

@@ -8,6 +8,7 @@ INLINE_XPU bool inRange(f32 start, f32 value, f32 end) { return value >= start &
 INLINE_XPU u8 min(u8 a, u8 b) { return a < b ? a : b; }
 INLINE_XPU u8 max(u8 a, u8 b) { return a > b ? a : b; }
 INLINE_XPU u8 clamp(u8 v, u8 min_v, u8 max_v) { return min(max(v, min_v), max_v); }
+INLINE_XPU f32 clamp(f32 v, f32 min_v, f32 max_v) { return fminf(fmaxf(v, min_v), max_v); }
 INLINE_XPU u8 closestLog2(u32 v) {
     u8 r = 0;
     while (v) {r++; v >>= 1;}
