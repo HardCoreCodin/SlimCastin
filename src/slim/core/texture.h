@@ -15,6 +15,8 @@ struct TextureMip {
     TexelQuad *texel_quads;
 
     INLINE_XPU Color sampleColor(f32 u, f32 v) const {
+        if (u < 0.0f) u += 10.0f;
+        if (v < 0.0f) v += 10.0f;
         u -= (f32)((u32)u);
         v -= (f32)((u32)v);
 

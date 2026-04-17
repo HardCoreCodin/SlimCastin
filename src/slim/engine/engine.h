@@ -446,15 +446,16 @@ struct Engine {
 
         switch (edit_mode) {
             case Edit::Walls: {
-                Tile& tile{tile_map.cells[(i32)render_state.hovered_pos.y][(i32)render_state.hovered_pos.x]};
+                render_state.hovered_pos = ground_position;
+                Tile& tile{tile_map.cells[(i32)ground_position.y][(i32)ground_position.x]};
                 bool tile_changed = false;
                 if (adding) {
                     if (!tile.is_full &&
-                        !((i32)render_state.hovered_pos.x == (i32)renderer.position.x &&
-                          (i32)render_state.hovered_pos.y == (i32)renderer.position.y)) {
+                        !((i32)ground_position.x == (i32)renderer.position.x &&
+                          (i32)ground_position.y == (i32)renderer.position.y)) {
                         tile_changed = true;
                         tile.is_full = true;
-                        tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 12;
+                        tile.left.texture_id = tile.right.texture_id = tile.bottom.texture_id = tile.top.texture_id = 5;
                     }
                 } else if (removing && tile.is_full) {
                     tile_changed = true;
@@ -537,7 +538,7 @@ struct Engine {
                         if (renderer.useGPU) uploadColumns(tile_map.columns);
                         renderer.generateWallHits();
                     }
-                } else if (removing && tile_map.columns.size > 0 & closest_column_id != -1) {
+                } else if (removing && tile_map.columns.size > 0 && closest_column_id != -1) {
                     removing = false;
                     render_state.hovered_pos = tile_map.columns[closest_column_id].position;
                     if (tile_map.columns.size > 1)

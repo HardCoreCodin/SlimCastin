@@ -86,9 +86,9 @@ struct Navigation {
         if (mouse::is_captured) {
             navigate(camera, delta_time);
             if (mouse::moved) orient(camera);
-            if (mouse::wheel_scrolled) zoom(camera);
+            if (mouse::wheel_scrolled && controls::is_pressed::ctrl) zoom(camera);
         } else {
-            if (mouse::wheel_scrolled) dolly(camera);
+            if (mouse::wheel_scrolled && controls::is_pressed::ctrl) dolly(camera);
             if (mouse::moved) {
                 if (mouse::middle_button.is_pressed) pan(camera);
                 if (mouse::right_button.is_pressed) orbit(camera);

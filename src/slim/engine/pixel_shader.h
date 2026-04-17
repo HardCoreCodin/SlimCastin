@@ -126,11 +126,69 @@ struct PixelShader {
     Ray ray;
     const Portal* portal;
     Color flare_light;
-    vec3 P, N, L, V, R, Ro, PortalToP;
-    vec2 ground_hit_position;
-    vec2 L2d;
-    f32 NdotL, NdotV, roughness, u, v;
+    vec3 P, N, L, V, R, Ro, PortalToP, hitN, hitP;
+    vec2 ground_hit_position, L2d, hit_uv;
+    f32 NdotL, NdotV, roughness, u, v, hit_distance, parallax_occlusion_depth;
     u8 mip_level, texture_id, edge_is;
+
+    INLINE_XPU vec2 parallaxViewDir(const WallHit& wall_hit, const vec3& view_dir) {
+        if (edge_is & FACING_DOWN ) return {   view_dir.x, -view_dir.y};
+        if (edge_is & FACING_UP   ) return {  -view_dir.x, -view_dir.y};
+        if (edge_is & FACING_LEFT ) return { view_dir.z, -view_dir.y};
+        if (edge_is & FACING_RIGHT) return {-view_dir.z, -view_dir.y};
+        if (edge_is & ABOVE)        return {   view_dir.x,view_dir.z};
+        if (edge_is & BELOW)        return {   view_dir.x,view_dir.z};
+        return {
+            wall_hit.hit_normal.perp().dot({view_dir.x, view_dir.z}),
+            -view_dir.y
+        };
+    }
+
+    INLINE_XPU f32 parallaxOcclusionMap(vec2 d_uv, const f32 NdotView, vec2 uv, vec2& new_uv) {
+        const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
+        f32 curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
+        if (curr_depth_map_value == 0.0f)
+            return 0.0f;
+
+        // the amount to shift the texture coordinates per layer
+
+        // number of depth layers
+        const f32 numLayers = lerp(32.0f, 8.0f, NdotView);
+
+        // calculate the size of each layer
+        f32 layer_height = 1.0f / numLayers;
+        d_uv *= layer_height;
+
+        // depth of current layer
+        f32 curr_layer_depth = 0.0;
+
+        vec2 prev_uv = uv;
+        f32 prev_depth_map_value = curr_depth_map_value;
+
+        while (curr_layer_depth < curr_depth_map_value)
+        {
+            prev_uv = uv;
+            prev_depth_map_value = curr_depth_map_value;
+
+            // shift texture coordinates along direction
+            uv -= d_uv;
+
+            // get depthmap value at current texture coordinates
+            curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
+
+            // get depth of next layer
+            curr_layer_depth += layer_height;
+        }
+
+        // get depth after and before collision for linear interpolation
+        f32 after_depth  = curr_depth_map_value - curr_layer_depth;
+        f32 before_depth = prev_depth_map_value - curr_layer_depth + layer_height;
+
+        // interpolation of texture coordinates
+        f32 weight = after_depth / (after_depth - before_depth);
+        new_uv = lerp(uv, prev_uv, weight);
+        return lerp(curr_depth_map_value, prev_depth_map_value, weight);
+    }
 
     INLINE_XPU bool init(
         const GroundHit* ground_hits,
@@ -152,6 +210,7 @@ struct PixelShader {
         const GroundHit& ground_hit{ground_hits[y]};
 
         ground_hit_position = position + wall_hit.ray_direction * ground_hit.z;
+        hitN = 0.0f;
         if (y < wall_hit.top ||
             y > wall_hit.bot) {
             const bool is_ceiling = y < mid_point;
@@ -171,9 +230,10 @@ struct PixelShader {
             Ro.x = position.x;
             Ro.z = position.y;
             Ro.y = 0.0f;
-            P.x = ground_hit_position.x;
-            P.z = ground_hit_position.y;
-            P.y = is_ceiling ? 1.0f : -1.0f;
+            hitP.x = ground_hit_position.x;
+            hitP.z = ground_hit_position.y;
+            hitP.y = is_ceiling ? 1.0f : -1.0f;
+            hitN.y = is_ceiling ? -1.0f : 1.0f;
         } else {
             mip_level = wall_hit.mip;
             v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
@@ -183,11 +243,38 @@ struct PixelShader {
             Ro.x = position.x;
             Ro.z = position.y;
             Ro.y = 0.0f;
-            P.x = wall_hit.hit_position.x;
-            P.z = wall_hit.hit_position.y;
-            P.y = (1.0f - v) * 2.0f - 1.0f;
+            hitP.x = wall_hit.hit_position.x;
+            hitP.z = wall_hit.hit_position.y;
+            hitP.y = (1.0f - v) * 2.0f - 1.0f;
             v *= 2.0f;
             v -= (f32)(i32)v;
+            if      (edge_is & FACING_DOWN ) hitN.z = 1.0f;
+            else if (edge_is & FACING_UP   ) hitN.z = -1.0f;
+            else if (edge_is & FACING_LEFT ) hitN.x = -1.0f;
+            else if (edge_is & FACING_RIGHT) hitN.x = 1.0f;
+            else if (edge_is == 0 && wall_hit.column_id != INVALID_COLUMN_ID) {
+                hitN.x = wall_hit.hit_normal.x;
+                hitN.z = wall_hit.hit_normal.y;
+            }
+        }
+
+        V = Ro - hitP;
+        hit_distance = V.length();
+        V /= hit_distance;
+        NdotV = hitN.dot(V);
+        P = hitP;
+        if (NdotV > 0.0f) {
+            vec2 new_uv;
+            hit_uv = {u, v};
+            parallax_occlusion_depth = parallaxOcclusionMap(
+                parallaxViewDir(wall_hit, V) * render_state.parallax_occlusion_scale,
+                NdotV,
+                hit_uv,
+                new_uv);
+
+            u = new_uv.x;
+            v = new_uv.y;
+            P = hitP - V * parallax_occlusion_depth * render_state.parallax_occlusion_scale * NdotV;
         }
 
         return true;
@@ -195,7 +282,7 @@ struct PixelShader {
 
     INLINE_XPU void prepareRayCast() {
         L2d = vec2{L.x, L.z};
-        ray.update(vec2{P.x, P.z}, L2d, ray.forward);
+        ray.update(vec2{hitP.x, hitP.z}, L2d, ray.forward);
     }
 
     INLINE_XPU bool rayHit(
@@ -238,12 +325,12 @@ struct PixelShader {
 
         flare_light = Black;
         if (render_state.render_mode == RenderMode_Beauty) {
+            V = -V;
             const f32 up_aim = (f32)render_state.screen_height * 0.5f - mid_point;
             const vec2 screen_ratio{(f32)x / (f32)render_state.screen_width, ((f32)y + up_aim) / (f32)render_state.screen_height};
-            V = P - Ro;
-            f32 hit_distance = V.length();
             f32 fraction = 1.0f / render_state.step_count;
-            V /= hit_distance;
+            Color enemy_light{Black};
+            u8 enemy_count =0;
             for (u8 i = 1; i < (render_state.light_count + render_state.enemy_count); i++) {
                 const PointLight& point_light{
                     i < render_state.light_count ?
@@ -309,7 +396,8 @@ struct PixelShader {
                             distance *= distance;
                             distance = 1.0f - distance;
 
-                            flare_light += 0.35f * Color(-0.25f).lerpTo(point_light.color * (point_light.intensity * accum), distance);
+                            enemy_light += 0.35f * Color(-0.25f).lerpTo(point_light.color * (point_light.intensity * accum), distance);
+                            enemy_count++;
                             // near = near.normalized();
                             // far = far.normalized();
                             radii += (1.0f + V.dot(near))*3.0f;
@@ -355,9 +443,9 @@ struct PixelShader {
                     flare_light += point_light.color * (point_light.intensity * accum);
                 }
             }
+            if (enemy_count) flare_light +=  enemy_light / enemy_count;
+            V = -V;
         }
-
-        V = -V;
 
         portal_render_data.init(portals.areBothActive());
         portal = nullptr;
@@ -493,7 +581,7 @@ struct PixelShader {
 
                 // brdf = (BRDFType)(render_state.flags & BRDF_MASK);
                 // if (brdf == BRDF_GGX)
-                    NdotV = clampedValue(N.dot(V));
+                NdotV = clampedValue(N.dot(V));
                 // else if (brdf == BRDF_Phong)
                     // R = (-V).reflectedAround(N);
 
@@ -535,6 +623,34 @@ struct PixelShader {
 
                         f32 attenuation = 1.0f / L.squaredLength();
                         L *= sqrtf(attenuation);
+
+                        if (render_state.flags & CAST_SHADOWS) {
+                            // number of depth layers
+                            if (hitN.dot(L) < 0.0f)
+                                continue;
+
+                            const f32 numLayers = lerp(32.0f, 8.0f, clampedValue(hitN.dot(L)));
+
+                            // calculate the size of each layer
+                            f32 layer_depth = 1.0f / numLayers;
+                            const vec2 d_uv = parallaxViewDir(wall_hit, L) * layer_depth * render_state.parallax_occlusion_scale;
+
+                            vec2 currentTexCoords = {u, v};
+                            float currentDepthMapValue = parallax_occlusion_depth;
+                            float currentLayerDepth = currentDepthMapValue;
+
+                            const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
+
+                            while (currentLayerDepth <= currentDepthMapValue && currentLayerDepth > 0.0)
+                            {
+                                currentTexCoords += d_uv;
+                                currentDepthMapValue = depth_texture.sampleColor(currentTexCoords.x, currentTexCoords.y).r;
+                                currentLayerDepth -= layer_depth;
+                            }
+
+                            if (currentLayerDepth > currentDepthMapValue)
+                                continue;
+                        }
 
                         const f32 Li = attenuation * (
                             i < render_state.light_count ?

@@ -4,7 +4,7 @@
 
 
 struct TileSide {
-	u8 texture_id = 0;
+	u8 texture_id = 5;
 	u16 edge_id = (u16)(-1);
 };
 

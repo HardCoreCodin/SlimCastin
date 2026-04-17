@@ -22,9 +22,10 @@ INLINE_XPU bool inRange(vec2 start, vec2 value, vec2 end) {
            inRange(start.y, value.y, end.y);
 }
 INLINE_XPU f32 getU(vec2 v) {
-    f32 u = v.y / v.x;
-    if (u > 1.0f || u < -1.0f) u = -1.0f / u;
-    return u + 1.0f;
+    f32 u = atan2(v.y, v.x) + pi;
+    u *= ONE_OVER_TWO_PI;
+    u = u - floor(u);
+    return u * (floor(v.length()) + 1.0f) * 3.0f;
 }
 
 struct RayHit {
@@ -75,8 +76,7 @@ struct RayHit {
         tile_coords.x = (i32)position.x;
         tile_coords.y = (i32)position.y;
         texture_u = getU(position - column.position);
-        texture_u *= column.radius;
-        texture_id = 12;
+        texture_id = 5;
         edge_is = 0;
     }
 };

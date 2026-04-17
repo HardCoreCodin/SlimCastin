@@ -45,7 +45,7 @@ struct Renderer : RayCast {
         portals.from.init();
         portals.to.init();
 
-        texel_size = 1.0f / (f32)render_data.textures[0].width;
+        texel_size = 4.0f / (f32)render_data.textures[0].width;
         last_mip = (u8)(render_data.textures[0].mip_count - 1);
 
         prior_screen_height = 0;

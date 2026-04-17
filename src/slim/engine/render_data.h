@@ -102,7 +102,7 @@ struct RenderState {
     vec3 lights_through_portal_from[MAX_POINT_LIGHTS];
     vec3 lights_through_portal_to[MAX_POINT_LIGHTS];
     vec2 hovered_pos;
-    f32 time;
+    f32 time, parallax_occlusion_scale;
     RenderMode render_mode;
     BRDFType brdf;
     Edit edit;
@@ -129,6 +129,7 @@ struct RenderState {
         light_count = 1;
         enemy_count = 0;
         time = 0.0f;
+        parallax_occlusion_scale = 0.14f;
 
         u8 permutation[] = { 151,160,137,91,90,15,
             131,13,201,95,96,53,194,233,7,225,140,36,103,30,69,142,8,99,37,240,21,10,23,

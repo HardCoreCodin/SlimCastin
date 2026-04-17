@@ -134,6 +134,7 @@ struct DungeonCrawler : SlimApp {
 	Dimensions& dimensions{renderer.dimensions};
     RenderMode& render_mode{render_state.render_mode};
 	Edit& edit{render_state.edit};
+
 	TileMap& tile_map{engine.tile_map};
 	u8& flags{render_state.flags};
 	u8& step_count{render_state.step_count};
@@ -169,6 +170,11 @@ struct DungeonCrawler : SlimApp {
     		VolumeSteps.value_color = step_count ? (step_count >= 64 ? Red : (step_count >= 16 ? Yellow : Cyan)) : Grey;
     	else
     		VolumeSteps.value_color = step_count ? (step_count >= 8 ? Red : (step_count >= 4 ? Yellow : Cyan)) : Grey;
+
+    	if (mouse::wheel_scrolled) {
+    		render_state.parallax_occlusion_scale += mouse::wheel_scroll_amount * 0.0001f;
+    		render_state.parallax_occlusion_scale = clamp(render_state.parallax_occlusion_scale, 0.0f, 2.0f);
+    	}
 
 		bool tile_map_changed = false;
 
@@ -303,7 +309,7 @@ struct DungeonCrawler : SlimApp {
 
     		render_data.textures = textures_slice.data;
     		render_data.texture_count = (u16)textures_slice.size;
-    		render_data.floor_texture_id = Texture_SoneWall9Color;
+    		render_data.floor_texture_id = Texture_SoneWall6Color;
     		render_data.ceiling_texture_id = Texture_SoneWall6Color;
     		render_data.map_width = tile_map.width;
     		render_data.map_height = tile_map.height;
