@@ -94,8 +94,10 @@ struct Engine {
     }
 
     void updateEnemies() {
+        static f32 enemy_distances[MAX_ENEMIES];
         for (int i = 0; i < render_state.enemy_count; i++) {
             Movable& enemy{enemies[i]};
+            enemy_distances[i] = renderer.forward.dot(vec2{enemy.position.x, enemy.position.z} - renderer.position);
             const f32 elapsed = enemy.spawned_time - render_state.time;
 
             enemy.position.y = sinf(elapsed) * 0.3f + 0.1f;
@@ -108,6 +110,21 @@ struct Engine {
             enemy_light.color.b -= cosf(elapsed * 2.0f) * 0.05f - 0.1f;
             enemy_light.intensity = 1.0f;
         }
+        for (int i = 0; i < render_state.enemy_count; i++) {
+            int closest_enemy_index = i;
+            for (int j = i + 1; j < render_state.enemy_count; j++) {
+                if (enemy_distances[j] < enemy_distances[i])
+                    closest_enemy_index = j;
+            }
+            if (closest_enemy_index != i) {
+                Movable closest_enemy{enemies[closest_enemy_index]};
+                PointLight closest_enemy_light{render_state.enemies[closest_enemy_index]};
+                enemies[closest_enemy_index] = enemies[i];
+                enemies[i] = closest_enemy;
+                render_state.enemies[closest_enemy_index] = render_state.enemies[i];
+                render_state.enemies[i] = closest_enemy_light;
+            }
+        }
     }
 
     void updateProjectiles(const f32 delta_time) {
@@ -117,6 +134,7 @@ struct Engine {
             (f32)(render_data.map_width - 1),
             (f32)(render_data.map_height - 1)
         };
+        RayHit hit;
         for (int i = 0; i < projectile_count; i++) {
             Movable& projectile{projectiles[i]};
             const f32 elapsed_time = render_state.time - projectile.spawned_time;
@@ -131,21 +149,21 @@ struct Engine {
                           tile_map.cells[(i32)projectile.position.z][(i32)projectile.position.x].is_full;
             if (remove && !above_or_below) {
                 Ray ray;
-
                 vec3 ray_direction_3d = projectile.position - projectile_position;
                 vec2 ray_direction_2d = vec2{ray_direction_3d.x, ray_direction_3d.z};
-                const f32 distance_2d = ray_direction_2d.length();
+                f32 hit_distance = ray_direction_2d.squaredLength();
+                const f32 distance_2d = sqrtf(hit_distance);
+                hit.init();
                 ray.update(vec2{projectile_position.x, projectile_position.z}, ray_direction_2d / distance_2d, renderer.forward);
-                f32 hit_distance = 1000000.0f;
                 u16 closest_hit_edge_id = INVALID_EDGE_ID;
-                u8 closest_hit_edge_is = 0;
+                Facing closest_hit_edge_facing = Facing::NotApplicable;
                 for (u16 edge_id = 0; edge_id < (u16)tile_map.edges.size; edge_id++) {
-                    if (ray.intersectsWithEdge(tile_map.edges.data[edge_id])) {
-                        ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
-                        if (ray.hit.distance < hit_distance) {
-                            hit_distance = ray.hit.distance;
+                    if (ray.intersectsWithEdge(tile_map.edges.data[edge_id], hit, render_state.rounded_corners_radius)) {
+                        hit.distance = (hit.position - ray.origin).squaredLength();
+                        if (hit.distance < hit_distance) {
+                            hit_distance = hit.distance;
                             closest_hit_edge_id = edge_id;
-                            closest_hit_edge_is = ray.hit.edge_is;
+                            closest_hit_edge_facing = hit.facing;
                         }
                     }
                 }
@@ -158,7 +176,7 @@ struct Engine {
                     const Portal* portal = renderer.portals.getPortalsFromWallPosition3D(new_projectile_position, closest_hit_edge_id, &other_portal);
 
                     if (portal && other_portal->isActive()) {
-                        i32 ray_rotation = portal->getRotation(other_portal->edge_is);
+                        i32 ray_rotation = portal->getRotation(other_portal->facing);
 
                         vec2 origin{projectile_position.x, projectile_position.z};
                         vec2 origin_to_portal = vec2{portal->position.x, portal->position.z} - origin;
@@ -185,8 +203,8 @@ struct Engine {
                         remove = false;
                         teleported = true;
                     }
-                }
-                if (!teleported) {
+                } else remove = false;
+                if (remove && !teleported) {
                     Portal* new_portal = renderer.portals.getPortalsFromProjectileIndex(i, &other_portal);
                     // Check if spawning a portal at the projectile's hit position is allowed:
                     if (new_portal && (
@@ -196,7 +214,7 @@ struct Engine {
                         new_portal->projectile_index = INVALID_PROJECTILE_INDEX;
                         new_portal->position = new_projectile_position;
                         new_portal->edge_id = closest_hit_edge_id;
-                        new_portal->edge_is = closest_hit_edge_is;
+                        new_portal->facing = closest_hit_edge_facing;
                         new_portal->radius = PORTAL_INITIAL_RADIUS;
 
                         need_generate_wall_hits = true;
@@ -269,79 +287,209 @@ struct Engine {
         if (renderer.portals.areBothActive()) renderer.updatePortalLights();
     }
 
-    void resolveCollisionBetweenCircls(vec2& current, const f32 radius, const Circle& circle) {
-        vec2 gap = current - circle.position;
+    bool resolveCollisionBetweenCircles(vec2& current, const f32 radius, const Circle& circle) {
+        vec2 gap = circle.position - current;
         f32 gap_distance = gap.length();
         if (gap_distance == 0)
-            return;
+            return false;
 
-        f32 distance_to_body = gap_distance - radius - circle.radius;
-        if (distance_to_body <= 0.0f)
-            current += gap * (distance_to_body / gap_distance);
+        f32 min_distance_allowed = radius + circle.radius;
+        if (gap_distance < min_distance_allowed) {
+            current -= gap * ((min_distance_allowed - gap_distance) / gap_distance);
+            return true;
+        }
+        return false;
+        // f32 distance_to_body = gap_distance - radius - circle.radius;
+        // if (distance_to_body <= 0.0f)
+        //     current += gap * (distance_to_body / gap_distance);
+    }
+    // bool resolveCollisionBetweenCircles(vec2& current, const f32 radius, const Circle& circle) {
+    //     vec2 gap = current - circle.position;
+    //     f32 gap_distance = gap.squaredLength();
+    //     if (gap_distance == 0)
+    //         return false;
+    //
+    //     gap_distance = sqrtf(gap_distance);
+    //     f32 distance_to_body = gap_distance - radius - circle.radius;
+    //     if (distance_to_body < 0.0f) {
+    //         current += gap * ((0.001f + distance_to_body) / gap_distance);
+    //         return true;
+    //     }
+    //     return false;
+    // }
+
+    bool resolveCollisionBetweenCirclesFromInside(vec2& current, const f32 radius, const Circle& circle) {
+        vec2 gap = current - circle.position;
+        f32 gap_distance = gap.squaredLength();
+        if (gap_distance == 0 || gap_distance > (circle.radius * circle.radius))
+            return false;
+
+        gap_distance = sqrtf(gap_distance);
+        f32 distance_to_body = gap_distance + radius - circle.radius;
+        if (distance_to_body > 0.0f) {
+            current -= gap * ((0.001f + distance_to_body) / gap_distance);
+            return true;
+        }
+        return false;
     }
 
     void resolveCollisionsWithRadius(vec2& position, const vec2& movement, const f32 radius, const int skip_column_id = -1, const int skip_enemy_id = -1) {
-        if (movement.x > 0.0f) {
-            i32 next_pos = (i32)(position.x + radius);
-            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
-            if (next_tile.is_full) position.x = (f32)next_pos - radius;
-        } else if (movement.x < 0.0f) {
-            i32 next_pos = (i32)(position.x - radius);
-            const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
-            if (next_tile.is_full) position.x = (f32)(next_pos + 1) + radius;
+        const f32 r = render_state.rounded_corners_radius;
+        const f32 distance_to_top = position.y - (f32)(i32)(position.y);
+        const f32 distance_to_bottom = 1.0f - distance_to_top;
+        const f32 distance_to_left = position.x - (f32)(i32)position.x;
+        const f32 distance_to_right = 1.0f - distance_to_left;
+        bool resolved = false;
+        const Tile& tile = tile_map.cells[(i32)(position.y - movement.y)][(i32)(position.x - movement.x)];
+        if (!tile.is_full) {
+            if (tile.top_left.rounding == Rounding::Concave && distance_to_top < r && distance_to_left < r) {
+                Circle concave_corner_circle{{(f32)(i32)position.x + r, (f32)(i32)position.y + r}, r};
+                resolved |= resolveCollisionBetweenCirclesFromInside(position, radius, concave_corner_circle);
+            }
+            if (tile.top_right.rounding == Rounding::Concave && distance_to_top < r && distance_to_right < r) {
+                Circle concave_corner_circle{{(f32)((i32)position.x + 1) - r, (f32)(i32)position.y + r}, r};
+                resolved |= resolveCollisionBetweenCirclesFromInside(position, radius, concave_corner_circle);
+            }
+            if (tile.bottom_left.rounding == Rounding::Concave && distance_to_bottom < r && distance_to_left < r) {
+                Circle concave_corner_circle{{(f32)(i32)position.x - r, (f32)((i32)position.y + 1) - r}, r};
+                resolved |= resolveCollisionBetweenCirclesFromInside(position, radius, concave_corner_circle);
+            }
+            if (tile.bottom_right.rounding == Rounding::Concave && distance_to_bottom < r && distance_to_right < r) {
+                Circle concave_corner_circle{{(f32)((i32)position.x + 1) + r, (f32)((i32)position.y + 1) - r}, r};
+                resolved |= resolveCollisionBetweenCirclesFromInside(position, radius, concave_corner_circle);
+            }
         }
-
-        if (movement.y < 0.0f) {
-            i32 next_pos = (i32)(position.y - radius);
-            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
-            if (next_tile.is_full) position.y = (f32)(next_pos + 1) + radius;
-        } else if (movement.y > 0.0f) {
-            i32 next_pos = (i32)(position.y + radius);
-            const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
-            if (next_tile.is_full) position.y = (f32)next_pos - radius;
+        if (!resolved) {
+            if (movement.x > 0.0f) {
+                i32 next_pos = (i32)(position.x + radius);
+                const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+                if (next_tile.is_full) {
+                    bool resolve_wall_x = true;
+                    if (next_tile.top_left.rounding == Rounding::Convex) {
+                        if (distance_to_top < r && distance_to_right < radius) {
+                            resolve_wall_x = false;
+                            Circle convex_corner_circle{{(f32)next_pos + r, (f32)(i32)position.y + r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    } else if (next_tile.bottom_left.rounding == Rounding::Convex) {
+                        if (distance_to_bottom < r && distance_to_right < radius) {
+                            resolve_wall_x = false;
+                            Circle convex_corner_circle{{(f32)next_pos + r, (f32)((i32)position.y + 1) - r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    }
+                    if (resolve_wall_x)
+                        position.x = (f32)next_pos - radius;
+                }
+            } else if (movement.x < 0.0f) {
+                i32 next_pos = (i32)(position.x - radius);
+                const Tile& next_tile = tile_map.cells[(i32)position.y][next_pos];
+                if (next_tile.is_full) {
+                    bool resolve_wall_x = true;
+                    if (next_tile.top_right.rounding == Rounding::Convex) {
+                        if (distance_to_top < r && distance_to_left < radius) {
+                            resolve_wall_x = false;
+                            Circle convex_corner_circle{{(f32)next_pos + 1.0f - r, (f32)(i32)position.y + r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    } else if (next_tile.bottom_right.rounding == Rounding::Convex) {
+                        if (distance_to_bottom < r && distance_to_left < radius) {
+                            resolve_wall_x = false;
+                            Circle convex_corner_circle{{(f32)next_pos + 1.0f - r, (f32)((i32)position.y + 1) - r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    }
+                    if (resolve_wall_x)
+                        position.x = (f32)(next_pos + 1) + radius;
+                }
+            }
         }
-
-        for (int i = 0; i < (i32)tile_map.columns.size; i++) {
-            if (i == skip_column_id)
-                continue;
-
-            const Circle& column{tile_map.columns.data[i]};
-
-            vec2 vector_to_column = column.position - position;
-            f32 distance_to_column = vector_to_column.length();
-            f32 min_distance_allowed = radius + column.radius;
-            if (distance_to_column < min_distance_allowed)
-                position -= (vector_to_column / distance_to_column) * (min_distance_allowed - distance_to_column);
+        if (!resolved) {
+            if (movement.y < 0.0f) {
+                i32 next_pos = (i32)(position.y - radius);
+                const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+                if (next_tile.is_full) {
+                    bool resolve_wall_y = true;
+                    if (next_tile.bottom_right.rounding == Rounding::Convex) {
+                        if (distance_to_right < r && distance_to_top < radius) {
+                            resolve_wall_y = false;
+                            Circle convex_corner_circle{{(f32)((i32)position.x + 1) - r, (f32)(next_pos + 1) - r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    } else if (next_tile.bottom_left.rounding == Rounding::Convex) {
+                        if (distance_to_left < r && distance_to_top < radius) {
+                            resolve_wall_y = false;
+                            Circle convex_corner_circle{{(f32)(i32)position.x + r, (f32)(next_pos + 1) - r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    }
+                    if (resolve_wall_y)
+                        position.y = position.y = (f32)(next_pos + 1) + radius;
+                }
+            } else if (movement.y > 0.0f) {
+                i32 next_pos = (i32)(position.y + radius);
+                const Tile& next_tile = tile_map.cells[next_pos][(i32)position.x];
+                if (next_tile.is_full) {
+                    bool resolve_wall_y = true;
+                    if (next_tile.top_right.rounding == Rounding::Convex) {
+                        if (distance_to_right < r && distance_to_bottom < radius) {
+                            resolve_wall_y = false;
+                            Circle convex_corner_circle{{(f32)((i32)position.x + 1) - r, (f32)next_pos + r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    } else if (next_tile.top_left.rounding == Rounding::Convex) {
+                        if (distance_to_left < r && distance_to_bottom < radius) {
+                            resolve_wall_y = false;
+                            Circle convex_corner_circle{{(f32)(i32)position.x + r, (f32)next_pos + r}, r};
+                            resolved |= resolveCollisionBetweenCircles(position, radius, convex_corner_circle);
+                        }
+                    }
+                    if (resolve_wall_y)
+                        position.y = (f32)next_pos - radius;
+                }
+            }
         }
+        for (int i = 0; i < (i32)tile_map.columns.size; i++)
+            if (i != skip_column_id)
+                resolveCollisionBetweenCircles(position, radius, tile_map.columns.data[i]);
 
-        for (int i = 0; i < render_state.enemy_count; i++)
+        for (int i = 0; i < (i32)render_state.enemy_count; i++)
             if (i != skip_enemy_id)
-                resolveCollisionBetweenCircls(position, radius, {{enemies[i].position.x, enemies[i].position.z}, 0.5f});
+                resolveCollisionBetweenCircles(position, radius, {{enemies[i].position.x, enemies[i].position.z}, 0.5f});
     }
 
-    void closestHitByRayCast(const vec2 origin, const vec2 direction, const bool skip) {
+    void closestHitByRayCast(RayHit& hit, const vec2 origin, const vec2 direction, const bool skip) {
         ray_hit_enemy = -1;
-        renderer.castRay(origin, direction, direction, tile_map.edges, tile_map.columns, false);
+        renderer.castRay(origin, direction, direction, tile_map.edges, tile_map.columns, render_state.rounded_corners_radius, false);
         if (edit_mode == Edit::Walls)
             return;
 
+        f32 t;
+        hit.init();
         int skip_column_id = skip ? (edit_mode == Edit::Columns ? (adding ? added_column_index : dragged_column_index) : -1) : -1;
         for (int i = 0; i < (u8)tile_map.columns.size; i++)
-            if (i != skip_column_id && renderer.ray.intersectsWithCircle(tile_map.columns[i]))
-                renderer.ray.hit.column_id = i;
+            if (i != skip_column_id && renderer.ray.intersectsWithCircle(tile_map.columns[i].position, tile_map.columns[i].radius, t)) {
+                if (t < hit.distance) {
+                    hit.distance = t;
+                    hit.column_id = i;
+                }
+            }
 
         int skip_enemy_id = skip ? (edit_mode == Edit::Enemies ? dragged_enemy_index : -1) : -1;
         for (int i = 0; i < render_state.enemy_count; i++)
-            if (i != skip_enemy_id && renderer.ray.intersectsWithCircle({{enemies[i].position.x, enemies[i].position.z}, 0.5f}))
-                ray_hit_enemy = i;
+            if (i != skip_enemy_id &&
+                renderer.ray.intersectsWithCircle({enemies[i].position.x, enemies[i].position.z}, 0.5f, t) &&
+                t < hit.distance) {
+                    hit.distance = t;
+                    ray_hit_enemy = i;
+                }
 
-        renderer.ray.hit.distance = sqrtf(renderer.ray.hit.distance);
         if (ray_hit_enemy != -1) {
-            renderer.ray.hit.column_id = INVALID_COLUMN_ID;
-            renderer.ray.hit.edge_id = INVALID_EDGE_ID;
-            renderer.ray.hit.position = renderer.ray.origin + renderer.ray.direction * renderer.ray.hit.distance;
-        } else if (renderer.ray.hit.column_id != INVALID_COLUMN_ID)
-            renderer.ray.hit.position = renderer.ray.origin + renderer.ray.direction * renderer.ray.hit.distance;
+            hit.column_id = INVALID_COLUMN_ID;
+            hit.edge_id = INVALID_EDGE_ID;
+            hit.position = renderer.ray.origin + renderer.ray.direction * hit.distance;
+        } else if (hit.column_id != INVALID_COLUMN_ID)
+            hit.position = renderer.ray.origin + renderer.ray.direction * hit.distance;
     }
 
     void displaceByRayCast(vec2& current, const vec2 next, const f32 radius, const bool skip) {
@@ -349,12 +497,15 @@ struct Engine {
         const f32 distance = movement.length();
         if (distance == 0.0f)
             return;
-        const vec2 direction = movement / distance;
-        closestHitByRayCast(current, direction, skip);
 
-        renderer.ray.hit.distance -= 0.001f;
-        if (renderer.ray.hit.distance < distance)
-            movement *= renderer.ray.hit.distance / distance;
+        RayHit hit;
+        hit.init();
+        const vec2 direction = movement / distance;
+        closestHitByRayCast(hit, current, direction, skip);
+
+        hit.distance -= 0.001f;
+        if (hit.distance < distance)
+            movement *= hit.distance / distance;
 
         current += movement;
 
@@ -371,10 +522,10 @@ struct Engine {
         const Portal* other_portal = nullptr;
         const Portal* portal = nullptr;
         if (renderer.portals.areBothActive() &&
-            renderer.castRay(renderer.position, movement, movement, tile_map.edges, tile_map.columns, false)) {
+            renderer.castRay(renderer.position, movement, movement, tile_map.edges, tile_map.columns, render_state.rounded_corners_radius, false)) {
             portal = renderer.portals.getPortalsFromWallPosition2D(renderer.closest_hit.position, renderer.closest_hit.edge_id, &other_portal);
             if (portal) {
-                if (renderer.closest_hit.edge_is & (FACING_UP | FACING_DOWN))
+                if (isHorizontal(renderer.closest_hit.facing))
                     teleport = renderer.position.y > portal->position.z != position.y > portal->position.z;
                 else
                     teleport = renderer.position.x > portal->position.x != position.x > portal->position.x;
@@ -435,12 +586,14 @@ struct Engine {
         const vec2 ground_position = renderer.position + wall_hit_group.main_hit.ray_direction * ground_hit.z;
         const f32 ground_position_distance = (ground_position - renderer.position).length();
 
+        RayHit hit;
+        hit.init();
         const vec2 direction = renderer.first_ray_direction + renderer.right_step * mouse_pos.x;
-        closestHitByRayCast(renderer.position, direction, true);
+        closestHitByRayCast(hit, renderer.position, direction, true);
         int closest_enemy_id = ray_hit_enemy;
-        int closest_column_id = renderer.ray.hit.column_id == INVALID_COLUMN_ID ? -1 : renderer.ray.hit.column_id;
-        const vec2 closest_hit_position = renderer.ray.hit.position;
-        const f32 closest_hit_distance = (renderer.ray.hit.position - renderer.position).length();
+        int closest_column_id = hit.column_id == INVALID_COLUMN_ID ? -1 : hit.column_id;
+        const vec2 closest_hit_position = hit.position;
+        const f32 closest_hit_distance = (hit.position - renderer.position).length();
 
         render_state.hovered_pos = closest_hit_distance < ground_position_distance ? closest_hit_position : ground_position;
 
@@ -533,7 +686,7 @@ struct Engine {
                         Circle& column{tile_map.columns[dragged_column_index]};
 
                         displaceByRayCast(column.position, render_state.hovered_pos - edit_offset, column.radius, true);
-                        resolveCollisionBetweenCircls(column.position, column.radius, {renderer.position, BODY_RADIUS});
+                        resolveCollisionBetweenCircles(column.position, column.radius, {renderer.position, BODY_RADIUS});
                         render_state.hovered_pos = column.position;
                         if (renderer.useGPU) uploadColumns(tile_map.columns);
                         renderer.generateWallHits();
@@ -603,7 +756,7 @@ struct Engine {
                     if (moving) {
                         vec2 enemy_position{enemies[dragged_enemy_index].position.x, enemies[dragged_enemy_index].position.z};
                         displaceByRayCast(enemy_position, render_state.hovered_pos - edit_offset, 0.5f, true);
-                        resolveCollisionBetweenCircls(enemy_position, 0.5f, {renderer.position, BODY_RADIUS});
+                        resolveCollisionBetweenCircles(enemy_position, 0.5f, {renderer.position, BODY_RADIUS});
                         enemies[dragged_enemy_index].position = vec3{enemy_position.x, 0.0f, enemy_position.y};
                         render_state.hovered_pos = enemy_position;
                     } else if (removing) {

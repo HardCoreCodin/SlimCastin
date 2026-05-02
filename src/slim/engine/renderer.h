@@ -12,7 +12,7 @@ void initDataOnGPU(const RenderData& render_data) {}
 void uploadEdges(const Slice<TileEdge>& edges) {}
 void uploadColumns(const Slice<Circle>& columns) {}
 void uploadGroundHits(GroundHit* ground_hits, u16 ground_hits_count) {}
-void generateWallHitsOnGPU(const RayCast &raycast) {}
+void generateWallHitsOnGPU(const RayCast &raycast, const f32 rounded_corners_radius) {}
 void uploadWallHits(WallHitGroup* wall_hit_groups, u16 wall_hits_count)  {}
 void downloadWallHits(WallHitGroup* wall_hits, u16 wall_hits_count)  {}
 #endif
@@ -111,13 +111,13 @@ struct Renderer : RayCast {
 
     void generateWallHits() {
         if (useGPU) {
-            generateWallHitsOnGPU(*this);
+            generateWallHitsOnGPU(*this, render_state.rounded_corners_radius);
             downloadWallHits(wall_hits, screen_width);
         } else {
             WallHitGroup wall_hit_group;
             vec2 ray_direction = first_ray_direction;
             for (u16 x = 0; x < screen_width; x++, ray_direction += right_step) {
-                generateWallHit(wall_hit_group, ray_direction, edges, columns);
+                generateWallHit(wall_hit_group, ray_direction, edges, columns, render_state.rounded_corners_radius);
                 wall_hits[x] = wall_hit_group;
             }
         }
@@ -146,7 +146,7 @@ struct Renderer : RayCast {
         for (u8 i = 0; i < render_state.light_count; i++) {
             vec2 light_position{render_state.lights[i].position.x, render_state.lights[i].position.z};
 
-            i32 ray_rotation = portals.from.getRotation(portals.to.edge_is);
+            i32 ray_rotation = portals.from.getRotation(portals.to.facing);
             vec2 origin_to_portal = vec2{portals.from.position.x, portals.from.position.z} - light_position;
             if (ray_rotation == 90) {
                 origin_to_portal = origin_to_portal.ccw90();
@@ -160,7 +160,7 @@ struct Renderer : RayCast {
             render_state.lights_through_portal_from[i].z = target.y;
             render_state.lights_through_portal_from[i].y = render_state.lights[i].position.y;
 
-            ray_rotation = portals.to.getRotation(portals.from.edge_is);
+            ray_rotation = portals.to.getRotation(portals.from.facing);
             origin_to_portal = vec2{portals.to.position.x, portals.to.position.z} - light_position;
             if (ray_rotation == 90) {
                 origin_to_portal = origin_to_portal.ccw90();

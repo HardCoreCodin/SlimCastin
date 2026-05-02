@@ -11,6 +11,7 @@ struct TileSide {
 
 struct Tile {
 	TileSide top{}, bottom{}, left{}, right{};
+	Corner top_left{}, top_right{}, bottom_left{}, bottom_right{};
 
 	bool is_full = false;
 	bool has_left_edge = false;
@@ -113,7 +114,7 @@ struct TileMap : Grid<Tile> {
 		        		} else { // No left edge above - create new one:
 		        			current_tile->left.edge_id = (u16)edges.size;
 		        			TileEdge& left_edge = edges.data[edges.size++];
-		        			left_edge.is = FACING_LEFT;
+		        			left_edge.facing = Facing::Left;
 							left_edge.texture_id = current_tile->left.texture_id;
 		        			left_edge.to = left_edge.from = position;
 		        			left_edge.to.y++;
@@ -128,7 +129,7 @@ struct TileMap : Grid<Tile> {
 		        		} else { // No right edge above - create new one:
 		        			current_tile->right.edge_id = (u16)edges.size;
 		        			TileEdge& right_edge = edges[edges.size++];
-		        			right_edge.is = FACING_RIGHT;
+		        			right_edge.facing = Facing::Right;
 							right_edge.texture_id = current_tile->right.texture_id;
 		        			right_edge.from = right_edge.to = position;
 		        			right_edge.from.x++;
@@ -145,7 +146,7 @@ struct TileMap : Grid<Tile> {
 		        		} else { // No top edge on the left - create new one:
 		        			current_tile->top.edge_id = (u16)edges.size;
 		        			TileEdge& top_edge = edges.data[edges.size++];
-		        			top_edge.is = FACING_UP;
+		        			top_edge.facing = Facing::Up;
 		        			top_edge.texture_id = current_tile->top.texture_id;
 		        			top_edge.from = top_edge.to = position;
 		        			top_edge.to.x++;
@@ -160,7 +161,7 @@ struct TileMap : Grid<Tile> {
 		        		} else { // No bottom edge on the left - create new one:
 		        			current_tile->bottom.edge_id = (u16)edges.size;
 		        			TileEdge& bottom_edge = edges.data[edges.size++];
-		        			bottom_edge.is = FACING_DOWN;
+		        			bottom_edge.facing = Facing::Down;
 		        			bottom_edge.texture_id = current_tile->bottom.texture_id;
 		        			bottom_edge.from = bottom_edge.to = position;
 		        			bottom_edge.from.y++;
@@ -180,6 +181,146 @@ struct TileMap : Grid<Tile> {
 	        position.x  = 0;
 	        position.y += 1;
 	    }
+
+		for (u16 i = 0; i < edges.size; i++) {
+			TileEdge& edge = edges.data[i];
+			TileEdge* other_edge_from = nullptr;
+			TileEdge* other_edge_to = nullptr;
+			const bool is_horizontal = isHorizontal(edge.facing);
+			for (u16 j = 0; j < edges.size; j++) {
+				TileEdge* other_edge = &edges.data[j];
+				if (j == i || is_horizontal == isHorizontal(other_edge->facing))
+					continue;
+
+				if (other_edge->to == edge.to ||
+					other_edge->from == edge.to) {
+					other_edge_to = other_edge;
+				} else if (other_edge->to == edge.from ||
+					other_edge->from == edge.from) {
+					other_edge_from = other_edge;
+				}
+			}
+
+			if (other_edge_to && other_edge_from)
+				switch (edge.facing) {
+					case Facing::Down: {
+						if (other_edge_from->facing == Facing::Right) {
+							edge.from_corner.rounding = Rounding::Concave;
+							edge.from_corner.horizontal = Facing::Down;
+							edge.from_corner.vertical = Facing::Right;
+							cells[edge.from.y][edge.from.x].top_left = edge.from_corner;
+							// cells[edge.from.y - 1][edge.from.x].bottom_left = edge.from_corner;
+							// cells[edge.from.y][edge.from.x - 1].top_right = edge.from_corner;
+						} else {
+							edge.from_corner.rounding = Rounding::Convex;
+							edge.from_corner.horizontal = Facing::Down;
+							edge.from_corner.vertical = Facing::Left;
+							cells[edge.from.y - 1][edge.from.x].bottom_left = edge.from_corner;
+						}
+						if (other_edge_to->facing == Facing::Right) {
+							edge.to_corner.rounding = Rounding::Convex;
+							edge.to_corner.horizontal = Facing::Down;
+							edge.to_corner.vertical = Facing::Right;
+							cells[edge.to.y - 1][edge.to.x - 1].bottom_right = edge.to_corner;
+						} else {
+							edge.to_corner.rounding = Rounding::Concave;
+							edge.to_corner.horizontal = Facing::Down;
+							edge.to_corner.vertical = Facing::Left;
+							cells[edge.to.y][edge.to.x - 1].top_right = edge.to_corner;
+							// cells[edge.to.y - 1][edge.to.x - 1].bottom_right = edge.to_corner;
+							// cells[edge.to.y][edge.to.x].top_left = edge.to_corner;
+						}
+						break;
+					}
+					case Facing::Up: {
+						if (other_edge_from->facing == Facing::Right) {
+							edge.from_corner.rounding = Rounding::Concave;
+							edge.from_corner.horizontal = Facing::Up;
+							edge.from_corner.vertical = Facing::Right;
+							cells[edge.from.y - 1][edge.from.x].bottom_left = edge.from_corner;
+							// cells[edge.from.y][edge.from.x].top_left = edge.from_corner;
+							// cells[edge.from.y - 1][edge.from.x - 1].bottom_right = edge.from_corner;
+						} else {
+							edge.from_corner.rounding = Rounding::Convex;
+							edge.from_corner.horizontal = Facing::Up;
+							edge.from_corner.vertical = Facing::Left;
+							cells[edge.from.y][edge.from.x].top_left = edge.from_corner;
+						}
+						if (other_edge_to->facing == Facing::Right) {
+							edge.to_corner.rounding = Rounding::Convex;
+							edge.to_corner.horizontal = Facing::Up;
+							edge.to_corner.vertical = Facing::Right;
+							cells[edge.to.y][edge.to.x - 1].top_right = edge.to_corner;
+						} else {
+							edge.to_corner.rounding = Rounding::Concave;
+							edge.to_corner.horizontal = Facing::Up;
+							edge.to_corner.vertical = Facing::Left;
+							cells[edge.to.y - 1][edge.to.x - 1].bottom_right = edge.to_corner;
+							// cells[edge.to.y][edge.to.x - 1].top_right = edge.to_corner;
+							// cells[edge.to.y - 1][edge.to.x].bottom_left = edge.to_corner;
+						}
+						break;
+					}
+					case Facing::Right: {
+						if (other_edge_from->facing == Facing::Down) {
+							edge.from_corner.rounding = Rounding::Concave;
+							edge.from_corner.horizontal = Facing::Down;
+							edge.from_corner.vertical = Facing::Right;
+							cells[edge.from.y][edge.from.x].top_left = edge.from_corner;
+							// cells[edge.from.y][edge.from.x - 1].top_right = edge.from_corner;
+							// cells[edge.from.y - 1][edge.from.x].bottom_left = edge.from_corner;
+						} else {
+							edge.from_corner.rounding = Rounding::Convex;
+							edge.from_corner.horizontal = Facing::Up;
+							edge.from_corner.vertical = Facing::Right;
+							cells[edge.from.y][edge.from.x - 1].top_right = edge.from_corner;
+						}
+						if (other_edge_to->facing == Facing::Down) {
+							edge.to_corner.rounding = Rounding::Convex;
+							edge.to_corner.horizontal = Facing::Down;
+							edge.to_corner.vertical = Facing::Right;
+							cells[edge.to.y - 1][edge.from.x - 1].bottom_right = edge.to_corner;
+						} else {
+							edge.to_corner.rounding = Rounding::Concave;
+							edge.to_corner.horizontal = Facing::Up;
+							edge.to_corner.vertical = Facing::Right;
+							cells[edge.to.y - 1][edge.to.x].bottom_left = edge.to_corner;
+							// cells[edge.to.y - 1][edge.to.x - 1].bottom_right = edge.to_corner;
+							// cells[edge.to.y][edge.to.x].top_left = edge.to_corner;
+						}
+						break;
+					}
+					case Facing::Left: {
+						if (other_edge_from->facing == Facing::Down) {
+							edge.from_corner.rounding = Rounding::Concave;
+							edge.from_corner.horizontal = Facing::Down;
+							edge.from_corner.vertical = Facing::Left;
+							cells[edge.from.y][edge.from.x - 1].top_right = edge.from_corner;
+							// cells[edge.from.y][edge.from.x].top_left = edge.from_corner;
+							// cells[edge.from.y - 1][edge.from.x - 1].bottom_right = edge.from_corner;
+						} else {
+							edge.from_corner.rounding = Rounding::Convex;
+							edge.from_corner.horizontal = Facing::Up;
+							edge.from_corner.vertical = Facing::Left;
+							cells[edge.from.y][edge.from.x].top_left = edge.from_corner;
+						}
+						if (other_edge_to->facing == Facing::Down) {
+							edge.to_corner.rounding = Rounding::Convex;
+							edge.to_corner.horizontal = Facing::Down;
+							edge.to_corner.vertical = Facing::Left;
+							cells[edge.to.y - 1][edge.to.x].bottom_left = edge.to_corner;
+						} else {
+							edge.to_corner.rounding = Rounding::Concave;
+							edge.to_corner.horizontal = Facing::Up;
+							edge.to_corner.vertical = Facing::Left;
+							cells[edge.to.y - 1][edge.to.x - 1].bottom_right = edge.to_corner;
+							// cells[edge.to.y - 1][edge.to.x].bottom_left = edge.to_corner;
+							// cells[edge.to.y][edge.to.x - 1].top_right = edge.to_corner;
+						}
+						break;
+					}
+				}
+		}
 	}
 
 	void load(Slice<Tile*> map_grid) {

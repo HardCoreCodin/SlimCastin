@@ -114,6 +114,15 @@ struct PortalRenderData {
 };
 
 
+enum struct HitKind : u8 {
+    Floor,
+    Ceiling,
+    FlatWall,
+    RoundedCorner,
+    Column
+};
+
+
 struct PixelShader {
     const RenderData& render_data;
     const RenderState& render_state;
@@ -124,46 +133,82 @@ struct PixelShader {
     PortalRenderData portal_render_data;
     SphereTracer sphere_tracer;
     Ray ray;
+    RayHit hit;
     const Portal* portal;
     Color flare_light;
     vec3 P, N, L, V, R, Ro, PortalToP, hitN, hitP;
-    vec2 ground_hit_position, L2d, hit_uv;
+    vec2 ground_hit_position, L2d;
     f32 NdotL, NdotV, roughness, u, v, hit_distance, parallax_occlusion_depth;
-    u8 mip_level, texture_id, edge_is;
+    HitKind hit_kind;
+    u8 mip_level, texture_id;
+    bool use_secondary_hit;
 
     INLINE_XPU vec2 parallaxViewDir(const WallHit& wall_hit, const vec3& view_dir) {
-        if (edge_is & FACING_DOWN ) return {   view_dir.x, -view_dir.y};
-        if (edge_is & FACING_UP   ) return {  -view_dir.x, -view_dir.y};
-        if (edge_is & FACING_LEFT ) return { view_dir.z, -view_dir.y};
-        if (edge_is & FACING_RIGHT) return {-view_dir.z, -view_dir.y};
-        if (edge_is & ABOVE)        return {   view_dir.x,view_dir.z};
-        if (edge_is & BELOW)        return {   view_dir.x,view_dir.z};
-        return {
+        vec2 flat_wall;
+        switch (wall_hit.facing) {
+            case Facing::Down : flat_wall = {   view_dir.x, -view_dir.y}; break;
+            case Facing::Up   : flat_wall = {  -view_dir.x, -view_dir.y}; break;
+            case Facing::Left : flat_wall = { view_dir.z, -view_dir.y}; break;
+            case Facing::Right: flat_wall = {-view_dir.z, -view_dir.y}; break;
+        }
+
+        vec2 column{
             wall_hit.hit_normal.perp().dot({view_dir.x, view_dir.z}),
             -view_dir.y
         };
+
+        switch (hit_kind) {
+            case HitKind::Column: return column;
+            case HitKind::FlatWall: return flat_wall;
+            case HitKind::RoundedCorner: return flat_wall.lerpTo(column, wall_hit.corner_fraction);
+            default: return { view_dir.x, view_dir.z };
+        }
     }
 
-    INLINE_XPU f32 parallaxOcclusionMap(vec2 d_uv, const f32 NdotView, vec2 uv, vec2& new_uv) {
+    INLINE_XPU f32 parallaxOcclusionMap(const WallHit& wall_hit, bool check_silhouette = true) {
         const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
-        f32 curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
+        f32 curr_depth_map_value = depth_texture.sampleColor(u, v).r;
         if (curr_depth_map_value == 0.0f)
             return 0.0f;
 
-        // the amount to shift the texture coordinates per layer
 
-        // number of depth layers
-        const f32 numLayers = lerp(32.0f, 8.0f, NdotView);
+        f32 circle_uv_scale = 1.0f;
+        f32 corner_fraction = 1.0f;
+        vec2 circle_center{};
+        switch (hit_kind) {
+            case HitKind::Column: {
+                circle_center = columns[wall_hit.column_id].position;
+                const f32 radius = columns[wall_hit.column_id].radius;
+                circle_uv_scale = pi * 2.0f / (3.0f * lerp((f32)((i32)radius + 1), (f32)((i32)radius + 2), fractionOf(radius)));
+                break;
+            }
+            case HitKind::RoundedCorner:
+                circle_center = wall_hit.hit_center;
+                corner_fraction = wall_hit.corner_fraction;
+                circle_uv_scale = 0.25f * pi  * (1.0f + render_state.rounded_corners_radius * 4.0f);
+                break;
+        }
+        const f32 silhouette_factor = corner_fraction * fminf(fabsf(V.x), fabsf(V.z));
 
         // calculate the size of each layer
-        f32 layer_height = 1.0f / numLayers;
-        d_uv *= layer_height;
+        const f32 layer_height = 1.0f / lerp(64.0f, 32.0f, NdotV * (1.0f - silhouette_factor));
+        const f32 scale = layer_height * render_state.parallax_occlusion_scale;
+        vec2 d_uv = parallaxViewDir(wall_hit, V) * scale * lerp(1.0f, circle_uv_scale, corner_fraction);
+
+        vec2 P2d{P.x, P.z};
+        const vec2 V2d{V.x, V.z};
+        const vec2 step_V{V2d * -scale};
 
         // depth of current layer
         f32 curr_layer_depth = 0.0;
 
-        vec2 prev_uv = uv;
+        vec2 uv{u, v};
+        vec2 prev_uv;
         f32 prev_depth_map_value = curr_depth_map_value;
+        const bool round_corners = hit_kind == HitKind::Column ||
+                                   hit_kind == HitKind::RoundedCorner;
+
+        f32 z = NdotV * scale;
 
         while (curr_layer_depth < curr_depth_map_value)
         {
@@ -172,6 +217,20 @@ struct PixelShader {
 
             // shift texture coordinates along direction
             uv -= d_uv;
+            if (round_corners) {
+                P2d += step_V;
+                vec2 N2d{(P2d - circle_center).normalized()};
+
+                if (check_silhouette) {
+                    const f32 N2DdotV = N2d.dot(V2d);
+                    z += N2DdotV * scale * silhouette_factor * (N2DdotV < 0.0f ? 8.0f : 0.075f);
+                    if (z < 0.0f)
+                        return -1.0f;
+                }
+                if (hit_kind == HitKind::RoundedCorner && wall_hit.rounding == Rounding::Convex)
+                    N2d = -N2d;
+                d_uv.x = lerp(d_uv.x, N2d.perp().dot(V2d) * scale * circle_uv_scale, corner_fraction);
+            }
 
             // get depthmap value at current texture coordinates
             curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
@@ -179,15 +238,95 @@ struct PixelShader {
             // get depth of next layer
             curr_layer_depth += layer_height;
         }
-
         // get depth after and before collision for linear interpolation
         f32 after_depth  = curr_depth_map_value - curr_layer_depth;
         f32 before_depth = prev_depth_map_value - curr_layer_depth + layer_height;
 
         // interpolation of texture coordinates
         f32 weight = after_depth / (after_depth - before_depth);
-        new_uv = lerp(uv, prev_uv, weight);
+
+        const vec2 new_uv = lerp(uv, prev_uv, weight);
+        u = new_uv.x;
+        v = new_uv.y;
+
         return lerp(curr_depth_map_value, prev_depth_map_value, weight);
+    }
+
+    INLINE_XPU bool init_base(
+        const GroundHit& ground_hit,
+        const WallHit& wall_hit,
+        const vec2& position,
+        u16 y,
+        i32 mid_point) {
+        ground_hit_position = position + wall_hit.ray_direction * ground_hit.z;
+        hitN = 0.0f;
+        hit_kind = HitKind::FlatWall;
+        if (y < wall_hit.top ||
+            y > wall_hit.bot) {
+            const vec2 start = 1.0f;
+            const vec2 end = {
+                (f32)(render_data.map_width - 1),
+                (f32)(render_data.map_height - 1)
+            };
+            if (!inRange(start, ground_hit_position, end))
+                return false;
+
+            mip_level = ground_hit.mip;
+            v = ground_hit_position.y - (f32)(i32)ground_hit_position.y;
+            u = ground_hit_position.x - (f32)(i32)ground_hit_position.x;
+
+            if (y < mid_point) {
+                hit_kind = HitKind::Ceiling;
+                texture_id = render_data.ceiling_texture_id;
+                hitP.y = 1.0f;
+                hitN.y = -1.0f;
+            } else {
+                hit_kind = HitKind::Floor;
+                texture_id = render_data.floor_texture_id;
+                hitP.y = -1.0f;
+                hitN.y = 1.0f;
+            }
+            Ro.x = position.x;
+            Ro.z = position.y;
+            Ro.y = 0.0f;
+            hitP.x = ground_hit_position.x;
+            hitP.z = ground_hit_position.y;
+        } else {
+            mip_level = wall_hit.mip;
+
+            v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
+            u = wall_hit.u;
+
+            // facing = wall_hit.facing;
+            texture_id = wall_hit.texture_id;
+
+            Ro.x = position.x;
+            Ro.z = position.y;
+            Ro.y = 0.0f;
+
+            hitP.x = wall_hit.hit_position.x;
+            hitP.z = wall_hit.hit_position.y;
+            hitP.y = (1.0f - v) * 2.0f - 1.0f;
+
+            hitN.x = wall_hit.hit_normal.x;
+            hitN.z = wall_hit.hit_normal.y;
+
+            v *= 2.0f;
+            v -= (f32)(i32)v;
+
+            if (wall_hit.column_id != INVALID_COLUMN_ID)
+                hit_kind = HitKind::Column;
+            else if (wall_hit.rounding != Rounding::None)
+                hit_kind = HitKind::RoundedCorner;
+        }
+
+        V = Ro - hitP;
+        hit_distance = V.length();
+        V /= hit_distance;
+        NdotV = hitN.dot(V);
+        P = hitP;
+
+        return true;
     }
 
     INLINE_XPU bool init(
@@ -209,71 +348,27 @@ struct PixelShader {
         const vec2& position = portal_index == -1 ? origin : wall_hit_group->portal_origins[portal_index];
         const GroundHit& ground_hit{ground_hits[y]};
 
-        ground_hit_position = position + wall_hit.ray_direction * ground_hit.z;
-        hitN = 0.0f;
-        if (y < wall_hit.top ||
-            y > wall_hit.bot) {
-            const bool is_ceiling = y < mid_point;
-            const vec2 start = 1.0f;
-            const vec2 end = {
-                (f32)(render_data.map_width - 1),
-                (f32)(render_data.map_height - 1)
-            };
-            if (!inRange(start, ground_hit_position, end))
-                return false;
+        if (!init_base(ground_hit, wall_hit, position, y, mid_point))
+            return false;
 
-            mip_level = ground_hit.mip;
-            v = ground_hit_position.y - (f32)(i32)ground_hit_position.y;
-            u = ground_hit_position.x - (f32)(i32)ground_hit_position.x;
-            edge_is = is_ceiling ? ABOVE : BELOW;
-            texture_id = is_ceiling ? render_data.ceiling_texture_id : render_data.floor_texture_id;
-            Ro.x = position.x;
-            Ro.z = position.y;
-            Ro.y = 0.0f;
-            hitP.x = ground_hit_position.x;
-            hitP.z = ground_hit_position.y;
-            hitP.y = is_ceiling ? 1.0f : -1.0f;
-            hitN.y = is_ceiling ? -1.0f : 1.0f;
-        } else {
-            mip_level = wall_hit.mip;
-            v = wall_hit.v + wall_hit.texel_step * (f32)(y - wall_hit.top);
-            u = wall_hit.u;
-            edge_is = wall_hit.edge_is;
-            texture_id = wall_hit.texture_id;
-            Ro.x = position.x;
-            Ro.z = position.y;
-            Ro.y = 0.0f;
-            hitP.x = wall_hit.hit_position.x;
-            hitP.z = wall_hit.hit_position.y;
-            hitP.y = (1.0f - v) * 2.0f - 1.0f;
-            v *= 2.0f;
-            v -= (f32)(i32)v;
-            if      (edge_is & FACING_DOWN ) hitN.z = 1.0f;
-            else if (edge_is & FACING_UP   ) hitN.z = -1.0f;
-            else if (edge_is & FACING_LEFT ) hitN.x = -1.0f;
-            else if (edge_is & FACING_RIGHT) hitN.x = 1.0f;
-            else if (edge_is == 0 && wall_hit.column_id != INVALID_COLUMN_ID) {
-                hitN.x = wall_hit.hit_normal.x;
-                hitN.z = wall_hit.hit_normal.y;
+        use_secondary_hit = false;
+        parallax_occlusion_depth = 0.0f;
+        if (render_state.parallax_occlusion_scale > 0.0f && NdotV > 0.0f) {
+            const bool check_silhouette = (hit_kind == HitKind::Column ||
+                                          (hit_kind == HitKind::RoundedCorner &&
+                                          wall_hit.rounding != Rounding::Concave)) &&
+                                          wall_hit_group->secondary_hit.isValid() &&
+                                          render_state.rounded_corners_radius > render_state.parallax_occlusion_scale;
+            parallax_occlusion_depth = parallaxOcclusionMap(wall_hit, check_silhouette);
+            if (parallax_occlusion_depth == -1.0f && portal_index == -1) {
+                if (!init_base(ground_hit, wall_hit_group->secondary_hit, position, y, mid_point))
+                    return false;
+                parallax_occlusion_depth = parallaxOcclusionMap(wall_hit_group->secondary_hit, false);
+                if (parallax_occlusion_depth == -1.0f)
+                    return false;
+
+                use_secondary_hit = true;
             }
-        }
-
-        V = Ro - hitP;
-        hit_distance = V.length();
-        V /= hit_distance;
-        NdotV = hitN.dot(V);
-        P = hitP;
-        if (NdotV > 0.0f) {
-            vec2 new_uv;
-            hit_uv = {u, v};
-            parallax_occlusion_depth = parallaxOcclusionMap(
-                parallaxViewDir(wall_hit, V) * render_state.parallax_occlusion_scale,
-                NdotV,
-                hit_uv,
-                new_uv);
-
-            u = new_uv.x;
-            v = new_uv.y;
             P = hitP - V * parallax_occlusion_depth * render_state.parallax_occlusion_scale * NdotV;
         }
 
@@ -282,6 +377,7 @@ struct PixelShader {
 
     INLINE_XPU void prepareRayCast() {
         L2d = vec2{L.x, L.z};
+        hit.init();
         ray.update(vec2{hitP.x, hitP.z}, L2d, ray.forward);
     }
 
@@ -293,23 +389,26 @@ struct PixelShader {
         ) {
         f32 closest_hit_distance = max_hit_distance;
         const f32 distance_2d_squared = L2d.squaredLength();
+        hit.init();
         for (u16 edge_id = 0; edge_id < (u16)edges.size; edge_id++) {
             if (edge_id == skip_edge_id)
                 continue;
 
-            if (ray.intersectsWithEdge(edges.data[edge_id])) {
-                ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
-                if (ray.hit.distance < closest_hit_distance)
-                    closest_hit_distance = ray.hit.distance;
+            if (ray.intersectsWithEdge(edges.data[edge_id], hit, render_state.rounded_corners_radius)) {
+                hit.distance = (hit.position - ray.origin).squaredLength();
+                if (hit.distance < closest_hit_distance)
+                    closest_hit_distance = hit.distance;
             }
         }
 
-        ray.hit.distance  = closest_hit_distance;
+        hit.distance  = closest_hit_distance;
 
+        f32 t;
         for (u8 c = 0; c < (u8)columns.size; c++)
-            ray.intersectsWithCircle(columns[c]);
+            if (ray.intersectsWithCircle(columns[c].position, columns[c].radius, t) && t > 0.0f && t*t < hit.distance)
+                hit.distance = t*t;
 
-        return ray.hit.distance < distance_2d_squared;
+        return hit.distance < distance_2d_squared;
     }
 
     INLINE_XPU bool prepare(
@@ -342,7 +441,8 @@ struct PixelShader {
                     vec3 LP = V * sphere_tracer.proj - sphere_tracer.RoC;
                     f32 distance = LP.squaredLength();
                     if (i < render_state.light_count) {
-                        if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
+                        if (sphere_tracer.hit(PROJECTILE_RADIUS, 1.0f / PROJECTILE_RADIUS, hit_distance)) {
+                        // if (distance < (PROJECTILE_RADIUS * PROJECTILE_RADIUS)) {
                             f32 flare_intensity = (PROJECTILE_RADIUS - sqrtf(distance)) / PROJECTILE_RADIUS;
                             flare_intensity *= flare_intensity;
                             flare_intensity *= flare_intensity;
@@ -443,7 +543,7 @@ struct PixelShader {
                     flare_light += point_light.color * (point_light.intensity * accum);
                 }
             }
-            if (enemy_count) flare_light +=  enemy_light / enemy_count;
+            if (enemy_count) flare_light +=  enemy_light;
             V = -V;
         }
 
@@ -454,10 +554,7 @@ struct PixelShader {
         const u16 wall_hit_edge_id = portal_index == -1 ?
             wall_hit_groups[x].main_hit.edge_id :
             wall_hit_groups[x].portal_hits[portal_index].edge_id;
-        if (wall_hit_edge_id != INVALID_EDGE_ID &&
-            edge_is != ABOVE &&
-            edge_is != BELOW) {
-
+        if (hit_kind == HitKind::FlatWall) {
             const Portal* other_portal;
             portal = portals.getPortalsFromWallPosition3D(P, wall_hit_edge_id, &other_portal);
             if (portal) {
@@ -495,10 +592,12 @@ struct PixelShader {
             N = vec3{render_data.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
 
         if (portal && normalNeeded && portal_render_data.distance_fraction < ((0.4f * (3.0f / 4.0f)))) {
-            if      (edge_is & FACING_DOWN ) PortalToP = {  PortalToP.x,  PortalToP.y, 1.0f - sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y)};
-            else if (edge_is & FACING_UP   ) PortalToP = {  -PortalToP.x, PortalToP.y, sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y) - 1.0f};
-            else if (edge_is & FACING_LEFT ) PortalToP = {-PortalToP.z,   PortalToP.y, 1.0f - sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y)};
-            else if (edge_is & FACING_RIGHT) PortalToP = { PortalToP.z,   PortalToP.y, sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y) - 1.0f};
+            switch (wall_hit.facing) {
+                case Facing::Down : PortalToP = {   PortalToP.x, PortalToP.y, 1.0f - sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y)}; break;
+                case Facing::Up   : PortalToP = {  -PortalToP.x, PortalToP.y, sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y) - 1.0f}; break;
+                case Facing::Left : PortalToP = {-PortalToP.z, PortalToP.y, 1.0f - sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y)}; break;
+                case Facing::Right: PortalToP = { PortalToP.z, PortalToP.y, sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y) - 1.0f}; break;
+            }
 
             f32 bump = portal_render_data.distance_fraction / (0.4f * (3.0f / 4.0f));
             if (bump < 0.5f) {
@@ -519,20 +618,24 @@ struct PixelShader {
             N = N.normalized();
         }
 
-        if (normalNeeded) {
-            if      (edge_is & FACING_DOWN ) N = {   N.x,   N.y,    N.z};
-            else if (edge_is & FACING_UP   ) N = {  -N.x,   N.y,   -N.z};
-            else if (edge_is & FACING_LEFT ) N = {-N.z,   N.y,  N.x};
-            else if (edge_is & FACING_RIGHT) N = { N.z,   N.y, -N.x};
-            else if (edge_is & ABOVE)        N = {   N.x,-N.z, -N.y};
-            else if (edge_is & BELOW)        N = {   N.x, N.z, -N.y};
-            else if (edge_is == 0 && wall_hit.column_id != INVALID_COLUMN_ID) {
-                mat3 m{vec3{wall_hit.hit_normal.y, 0.0f, -wall_hit.hit_normal.x},
-                       vec3{0.0f, 1.0f, 0.0f},
-                        vec3{wall_hit.hit_normal.x, 0.0f, wall_hit.hit_normal.y}};
-                N = m * N;
+        if (normalNeeded)
+            switch (hit_kind) {
+                case HitKind::Column:
+                case HitKind::RoundedCorner: N = mat3{
+                    vec3{wall_hit.hit_normal.y, 0.0f, -wall_hit.hit_normal.x},
+                           vec3{0.0f, 1.0f, 0.0f},
+                            vec3{wall_hit.hit_normal.x, 0.0f, wall_hit.hit_normal.y}
+                    } * N; break;
+                case HitKind::Ceiling: N = {   N.x,-N.z, -N.y}; break;
+                case HitKind::Floor  : N = {   N.x, N.z, -N.y}; break;
+                case HitKind::FlatWall:
+                    switch (wall_hit.facing) {
+                        case Facing::Down : N = {   N.x,   N.y,    N.z}; break;
+                        case Facing::Up   : N = {  -N.x,   N.y,   -N.z}; break;
+                        case Facing::Left : N = {-N.z,   N.y,  N.x}; break;
+                        case Facing::Right: N = { N.z,   N.y, -N.x}; break;
+                    }
             }
-        }
 
         float AO = 1.0f;
         if (render_state.flags & USE_AO_MAP &&
@@ -569,9 +672,9 @@ struct PixelShader {
                 break;
             }
             case RenderMode_Untextured: pixel = Color(
-                edge_is == ABOVE ?
+                hit_kind == HitKind::Ceiling ?
                     UNTEXTURED_CEILING_COLOR :
-                    (edge_is == BELOW ?
+                    (hit_kind == HitKind::Floor ?
                         UNTEXTURED_FLOOR_COLOR :
                         UNTEXTURED_WALL_COLOR)); break;
             default: {
@@ -600,8 +703,8 @@ struct PixelShader {
 
                             prepareRayCast();
                             bool light_ray_goes_through_light_portal = false;
-                            if (ray.intersectsWithEdge(edges.data[light_portal.edge_id])) {
-                                vec3 P2 = P + L * ((ray.hit.position - ray.origin).length() / L2d.length());
+                            if (ray.intersectsWithEdge(edges.data[light_portal.edge_id], hit, render_state.rounded_corners_radius)) {
+                                vec3 P2 = P + L * ((hit.position - ray.origin).length() / L2d.length());
                                 P2.y *= 0.5f;
                                 vec3 PortalToP2 = P2 - vec3{light_portal.position.x, light_portal.position.y*0.5f, light_portal.position.z};
                                 if (PortalToP2.squaredLength() < (light_portal.radius * light_portal.radius))
@@ -615,7 +718,7 @@ struct PixelShader {
                             if (j == 0)
                                 prepareRayCast();
                             else
-                                ray.hit.init();
+                                hit.init();
 
                             if (rayHit(edges, columns, j > 0 ? light_portal_edge_id : INVALID_EDGE_ID))
                                 continue;
@@ -624,35 +727,71 @@ struct PixelShader {
                         f32 attenuation = 1.0f / L.squaredLength();
                         L *= sqrtf(attenuation);
 
+                        f32 shadow_opacity = 1.0f;
                         if (render_state.flags & CAST_SHADOWS) {
                             // number of depth layers
                             if (hitN.dot(L) < 0.0f)
                                 continue;
 
-                            const f32 numLayers = lerp(32.0f, 8.0f, clampedValue(hitN.dot(L)));
+                            if (parallax_occlusion_depth > 0.0f) {
+                                const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
 
-                            // calculate the size of each layer
-                            f32 layer_depth = 1.0f / numLayers;
-                            const vec2 d_uv = parallaxViewDir(wall_hit, L) * layer_depth * render_state.parallax_occlusion_scale;
+                                // calculate the size of each layer
+                                f32 layer_height = 1.0f / lerp(32.0f, 8.0f, clampedValue(hitN.dot(L)));
+                                const vec2 d_uv = parallaxViewDir(wall_hit, L) * layer_height * render_state.parallax_occlusion_scale;
+                                vec2 uv = {u, v};
 
-                            vec2 currentTexCoords = {u, v};
-                            float currentDepthMapValue = parallax_occlusion_depth;
-                            float currentLayerDepth = currentDepthMapValue;
+                                // f32 sh0 = parallax_occlusion_depth;
+                                // uv = vec2{u, v} + d_uv * 0.88f;
+                                // f32 shA = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.88f) * 1.0f;
+                                // uv = vec2{u, v} + d_uv * 0.77f;
+                                // f32 sh9 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.77f) * 2.0f;
+                                // uv = vec2{u, v} + d_uv * 0.66f;
+                                // f32 sh8 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.66f) * 4.0f;
+                                // uv = vec2{u, v} + d_uv * 0.55f;
+                                // f32 sh7 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.55f) * 6.0f;
+                                // uv = vec2{u, v} + d_uv * 0.44f;
+                                // f32 sh6 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.44f) * 8.0f;
+                                // uv = vec2{u, v} + d_uv * 0.33f;
+                                // f32 sh5 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.33f) * 10.0f;
+                                // uv = vec2{u, v} + d_uv * 0.22f;
+                                // f32 sh4 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.22f) * 12.0f;
+                                // shadow_opacity = fmaxf( fmaxf( fmaxf( fmaxf( fmaxf( fmaxf( shA, sh9 ), sh8 ), sh7 ), sh6 ), sh5 ), sh4 );
+                                // shadow_opacity = shadow_opacity * 0.25f;
+                                // shadow_opacity = 1 - shadow_opacity;
 
-                            const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
+                                f32 curr_depth_map_value = parallax_occlusion_depth;
 
-                            while (currentLayerDepth <= currentDepthMapValue && currentLayerDepth > 0.0)
-                            {
-                                currentTexCoords += d_uv;
-                                currentDepthMapValue = depth_texture.sampleColor(currentTexCoords.x, currentTexCoords.y).r;
-                                currentLayerDepth -= layer_depth;
+                                f32 curr_layer_depth = curr_depth_map_value;
+                                f32 prev_layer_depth = curr_depth_map_value;
+                                f32 prev_depth_map_value = curr_depth_map_value;
+
+                                while (prev_layer_depth <= prev_depth_map_value && prev_layer_depth > 0.0)
+                                {
+                                    uv += d_uv;
+                                    prev_layer_depth = curr_layer_depth;
+                                    prev_depth_map_value = curr_depth_map_value;
+                                    curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
+                                    curr_layer_depth -= layer_height;
+                                }
+
+                                if (prev_layer_depth > prev_depth_map_value) {
+                                    if (curr_layer_depth > curr_depth_map_value)
+                                        shadow_opacity = 0.25f;
+                                    else {
+                                        f32 after_depth  = curr_depth_map_value - curr_layer_depth;
+                                        // if (after_depth > 0.0f) {
+                                            f32 before_depth = prev_depth_map_value - curr_layer_depth - layer_height;
+
+                                            // interpolation of texture coordinates
+                                            shadow_opacity = 0.25f + 0.75f * after_depth / (after_depth - before_depth);
+                                        // }
+                                    }
+                                }
                             }
-
-                            if (currentLayerDepth > currentDepthMapValue)
-                                continue;
                         }
 
-                        const f32 Li = attenuation * (
+                        const f32 Li = shadow_opacity * attenuation * (
                             i < render_state.light_count ?
                             render_state.lights[i].intensity :
                             render_state.enemies[i - render_state.light_count].intensity);
@@ -726,7 +865,7 @@ struct PixelShader {
 
         Color pixel = Black;
         if (!(portal_render_data.render_through && !portal_render_data.blend))
-            pixel = render(wall_hit_group.main_hit);
+            pixel = render(use_secondary_hit ? wall_hit_group.secondary_hit : wall_hit_group.main_hit);
 
         if (portal_render_data.render_through) {
             f32 portal_blend_factor = portal_render_data.blend_factor;

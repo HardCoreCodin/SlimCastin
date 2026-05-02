@@ -12,28 +12,47 @@
 
 #define MAX_COLUMN_COUNT 16
 
-#define FACING_UP      (1 << 0)
-#define FACING_DOWN    (1 << 1)
-#define FACING_LEFT    (1 << 2)
-#define FACING_RIGHT   (1 << 3)
-#define ABOVE          (1 << 4)
-#define BELOW          (1 << 5)
-#define ON_THE_LEFT    (1 << 5)
-#define ON_THE_RIGHT   (1 << 7)
 
-#define FACING_MASK    (FACING_UP | FACING_DOWN | FACING_LEFT | FACING_RIGHT)
-
-
-struct Is {
-    bool facing_up : 1;
-    bool facing_down : 1;
-    bool facing_left : 1;
-    bool facing_right : 1;
-    bool above : 1;
-    bool below : 1;
-    bool on_the_right : 1;
-    bool on_the_left : 1;
+enum struct Placed : u8 {
+    NotVisible,
+    Above,
+    Below,
+    OnTheLeft,
+    OnTheRight
 };
+
+
+enum struct Rounding : u8 {
+    None,
+    Convex,
+    Concave
+};
+
+enum struct Facing : u8 {
+    NotApplicable,
+    Up,
+    Down,
+    Left,
+    Right
+};
+
+
+struct Corner {
+    Rounding rounding{Rounding::None};
+    Facing horizontal{Facing::NotApplicable};
+    Facing vertical{Facing::NotApplicable};
+};
+
+
+INLINE_XPU bool isHorizontal(Facing facing) {
+    return facing == Facing::Up || facing == Facing::Down;
+}
+
+
+INLINE_XPU bool isVertical(Facing facing) {
+    return facing == Facing::Left || facing == Facing::Right;
+}
+
 
 struct Circle {
     vec2 position;
@@ -43,34 +62,36 @@ struct Circle {
 struct TileEdge {
     vec2i from{};
     vec2i to{};
+    Facing facing{Facing::NotApplicable};
+    Corner from_corner{};
+    Corner to_corner{};
     u8 texture_id = 0;
-    u8 is = 0;
 
-    INLINE_XPU u8 isVisible(const vec2& origin) const {
-        u8 is_visible = 0;
-        if (is & (FACING_LEFT | FACING_RIGHT)) {
-            if (from.x > origin.x) is_visible |= ON_THE_RIGHT;
-            if (to.x   < origin.x) is_visible |= ON_THE_LEFT;
+    INLINE_XPU Placed isVisible(const vec2& origin) const {
+        Placed placed = Placed::NotVisible;
+        if (isVertical(facing)) {
+            if (from.x > origin.x) placed = Placed::OnTheRight;
+            if (to.x   < origin.x) placed = Placed::OnTheLeft;
         } else {
-            if (to.y   < origin.y) is_visible |= ABOVE;
-            if (from.y > origin.y) is_visible |= BELOW;
+            if (to.y   < origin.y) placed = Placed::Above;
+            if (from.y > origin.y) placed = Placed::Below;
         }
 
         if (!(
-            is & FACING_LEFT  && is_visible & ON_THE_RIGHT ||
-            is & FACING_RIGHT && is_visible & ON_THE_LEFT ||
-            is & FACING_DOWN  && is_visible & ABOVE ||
-            is & FACING_UP    && is_visible & BELOW))
-            is_visible = 0;
+            facing == Facing::Left  && placed == Placed::OnTheRight ||
+            facing == Facing::Right && placed == Placed::OnTheLeft ||
+            facing == Facing::Down  && placed == Placed::Above ||
+            facing == Facing::Up    && placed == Placed::Below))
+            placed = Placed::NotVisible;
 
-        return is_visible;
+        return placed;
     }
 
     bool overlaps(const TileEdge& other) const {
-        if (other.is != is)
+        if (other.facing != facing)
             return false;
 
-        if (is & (FACING_LEFT | FACING_RIGHT)) {
+        if (isVertical(facing)) {
             if (from.x > other.to.x || other.from.x > to.x)
                 return false;
         } else {
@@ -80,3 +101,105 @@ struct TileEdge {
         return true;
     }
 };
+
+    //
+    // INLINE_XPU u8 intersectsWithEdge(const TileEdge& edge, RayHit& hit, const f32 rounding_radius = 0.2f) {
+    //     u8 is_visible = edge.isVisible(origin);
+    //     if (is_visible == 0)
+    //         return 0;
+    //
+    //     hit.edge_is = edge.is;
+    //     if (edge.is & (FACING_LEFT | FACING_RIGHT)) {
+    //         if (is_vertical ||
+    //             (is_facing_right && (is_visible & ON_THE_LEFT)) ||
+    //             (is_facing_left && (is_visible & ON_THE_RIGHT)))
+    //             return 0;
+    //
+    //         hit.position = (f32)edge.to.x - origin.x;
+    //         hit.position.y *= rise_over_run;
+    //         hit.position += origin;
+    //
+    //         if (inRange((f32)edge.from.y, hit.position.y, (f32)edge.to.y)) {
+    //             hit.distance = hit.position.y - edge.from.y;
+    //             if (hit.distance < rounding_radius) {
+    //                 hit.edge_is |= edge.from_corner & CONCAVE ? CONCAVE : CONVEX;
+    //                 hit.center = edge.from;
+    //                 hit.center.y += rounding_radius;
+    //                 hit.center.x +=
+    //                     ((edge.is & FACING_RIGHT) && (edge.from_corner & FACING_DOWN)) ||
+    //                     ((edge.is & FACING_LEFT)  && (edge.from_corner & FACING_UP)) ?
+    //                     rounding_radius :
+    //                     -rounding_radius;
+    //             } else {
+    //                 hit.distance = edge.to.y - hit.position.y;
+    //                 if (hit.distance < rounding_radius) {
+    //                     hit.edge_is |= edge.to_corner & CONCAVE ? CONCAVE : CONVEX;
+    //                     hit.center = edge.to;
+    //                     hit.center.y -= rounding_radius;
+    //                     hit.center.x +=
+    //                         ((edge.is & FACING_RIGHT) && (edge.to_corner & FACING_UP)) ||
+    //                         ((edge.is & FACING_LEFT)  && (edge.to_corner & FACING_DOWN)) ?
+    //                         rounding_radius :
+    //                         -rounding_radius;
+    //                 }
+    //             }
+    //
+    //             if (hit.edge_is & (CONVEX | CONCAVE)) {
+    //                 if (intersectsWithCircle(hit.center, rounding_radius, hit.distance, hit.edge_is & CONCAVE))
+    //                     hit.position = origin + direction * hit.distance;
+    //                 else
+    //                     return 0;
+    //             }
+    //
+    //             return is_visible;
+    //         }
+    //
+    //         return 0;
+    //     }
+    //
+    //     // Edge is horizontal:
+    //     if (is_horizontal ||
+    //         (is_facing_up && (is_visible & BELOW)) ||
+    //         (is_facing_down && (is_visible & ABOVE)))
+    //         return 0;
+    //
+    //     hit.position = (f32)edge.to.y - origin.y;
+    //     hit.position.x *= run_over_rise;
+    //     hit.position += origin;
+    //
+    //     if (inRange((f32)edge.from.x, hit.position.x, (f32)edge.to.x)) {
+    //         hit.distance = hit.position.x - edge.from.x;
+    //         if (hit.distance < rounding_radius) {
+    //             hit.edge_is |= edge.from_corner & CONCAVE ? CONCAVE : CONVEX;
+    //             hit.center = edge.from;
+    //             hit.center.x += rounding_radius;
+    //             hit.center.y +=
+    //                 ((edge.is & FACING_DOWN) && (edge.from_corner & FACING_RIGHT)) ||
+    //                 ((edge.is & FACING_UP)   && (edge.from_corner & FACING_LEFT)) ?
+    //                 rounding_radius :
+    //                 -rounding_radius;
+    //         } else {
+    //             hit.distance = edge.to.x - hit.position.x;
+    //             if (hit.distance < rounding_radius) {
+    //                 hit.edge_is |= edge.to_corner & CONCAVE ? CONCAVE : CONVEX;
+    //                 hit.center = edge.to;
+    //                 hit.center.x -= rounding_radius;
+    //                 hit.center.y +=
+    //                     ((edge.is & FACING_DOWN) && (edge.to_corner & FACING_LEFT)) ||
+    //                     ((edge.is & FACING_UP)   && (edge.to_corner & FACING_RIGHT)) ?
+    //                     rounding_radius :
+    //                     -rounding_radius;
+    //             }
+    //         }
+    //
+    //         if (hit.edge_is & (CONVEX | CONCAVE)) {
+    //             if (intersectsWithCircle(hit.center, rounding_radius, hit.distance, hit.edge_is & CONCAVE))
+    //                 hit.position = origin + direction * hit.distance;
+    //             else
+    //                 return 0;
+    //         }
+    //
+    //         return is_visible;
+    //     }
+    //     return 0;
+    // }

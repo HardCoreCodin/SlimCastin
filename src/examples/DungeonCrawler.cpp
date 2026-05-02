@@ -43,12 +43,9 @@
 // `;
 
 TileSide TILE_SIDE{Texture_SoneWall9Color};
-Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
-Tile F_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
-Tile T_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, true, true, true, true, true};
+Corner TILE_CORNER{};
+Tile W_TILE{TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_SIDE, TILE_CORNER, TILE_CORNER, TILE_CORNER, TILE_CORNER, true, true, true, true, true};
 
-Tile* F{&F_TILE};
-Tile* T{&T_TILE};
 Tile* W{&W_TILE};
 Tile* I{nullptr};
 
@@ -172,8 +169,14 @@ struct DungeonCrawler : SlimApp {
     		VolumeSteps.value_color = step_count ? (step_count >= 8 ? Red : (step_count >= 4 ? Yellow : Cyan)) : Grey;
 
     	if (mouse::wheel_scrolled) {
-    		render_state.parallax_occlusion_scale += mouse::wheel_scroll_amount * 0.0001f;
-    		render_state.parallax_occlusion_scale = clamp(render_state.parallax_occlusion_scale, 0.0f, 2.0f);
+    		if (controls::is_pressed::shift) {
+    			render_state.rounded_corners_radius += mouse::wheel_scroll_amount * 0.0001f;
+    			render_state.rounded_corners_radius = clamp(render_state.rounded_corners_radius, 0.0f, 0.5f);
+    			renderer.generateWallHits();
+    		} else {
+    			render_state.parallax_occlusion_scale += mouse::wheel_scroll_amount * 0.0001f;
+    			render_state.parallax_occlusion_scale = clamp(render_state.parallax_occlusion_scale, 0.0f, 2.0f);
+    		}
     	}
 
 		bool tile_map_changed = false;

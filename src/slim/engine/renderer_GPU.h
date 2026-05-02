@@ -26,16 +26,16 @@ TextureMip *t_texture_mips;
 TexelQuad *t_texel_quads;
 u32* t_window_content;
 
-__global__ void d_generateWallHits(RayCast raycast) {
+__global__ void d_generateWallHits(RayCast raycast, const f32 rounded_corners_radius) {
     const u32 x = blockDim.x * blockIdx.x + threadIdx.x;
     if (x >= raycast.screen_width)
         return;
 
     vec2 ray_direction = raycast.first_ray_direction + (f32)x * raycast.right_step;
-    raycast.generateWallHit(d_hits.wall_hits[x], ray_direction, d_edges, d_columns);
+    raycast.generateWallHit(d_hits.wall_hits[x], ray_direction, d_edges, d_columns, rounded_corners_radius);
 }
 
-void generateWallHitsOnGPU(const RayCast& raycast) {
+void generateWallHitsOnGPU(const RayCast& raycast, const f32 rounded_corners_radius) {
     u32 pixel_count = raycast.screen_width;
     u32 threads = SLIM_THREADS_PER_BLOCK;
     u32 blocks  = pixel_count / threads;
@@ -45,7 +45,7 @@ void generateWallHitsOnGPU(const RayCast& raycast) {
     } else if (pixel_count % threads)
         blocks++;
 
-    d_generateWallHits<<<blocks, threads>>>(raycast);
+    d_generateWallHits<<<blocks, threads>>>(raycast, rounded_corners_radius);
 }
 
 __global__ void d_render(const RayCast raycast, const RenderState render_state) {

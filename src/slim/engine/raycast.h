@@ -1,6 +1,7 @@
 #pragma once
 
 #include "./render_data.h"
+#include "./tilemap_base.h"
 
 
 INLINE_XPU bool inRange(i32 start, i32 value, i32 end) { return value >= start && value <= end; }
@@ -25,25 +26,32 @@ INLINE_XPU f32 getU(vec2 v) {
     f32 u = atan2(v.y, v.x) + pi;
     u *= ONE_OVER_TWO_PI;
     u = u - floor(u);
-    return u * (floor(v.length()) + 1.0f) * 3.0f;
+    return u;
 }
 
 struct RayHit {
     vec2i tile_coords;
     vec2 position;
+    vec2 center;
 
     f32 distance;
     f32 perp_distance;
     f32 texture_u;
+    f32 corner_fraction;
 
     u16 edge_id;
     u8 column_id;
     u8 texture_id;
-    u8 edge_is;
+    Facing facing;
+    Corner corner;
 
     INLINE_XPU void init() {
         column_id = INVALID_COLUMN_ID;
         edge_id = INVALID_EDGE_ID;
+        facing = Facing::NotApplicable;
+        corner.rounding = Rounding::None;
+        corner.horizontal = Facing::NotApplicable;
+        corner.vertical = Facing::NotApplicable;
     }
 
     INLINE_XPU bool isValid() {
@@ -51,22 +59,54 @@ struct RayHit {
                edge_id != INVALID_EDGE_ID;
     }
 
-    INLINE_XPU void finalizeFromEdge(const TileEdge& edge, const vec2 ray_origin, const vec2 forward) {
+    INLINE_XPU void finalizeFromEdge(const TileEdge& edge, const vec2 ray_origin, const vec2 forward, const f32 rounding_radius) {
         texture_id = edge.texture_id;
 
         perp_distance = fmaxf(0.001f, forward.dot(position - ray_origin));
 
-        tile_coords.x = edge_is & FACING_RIGHT ? (i32)position.x - 1 : (i32)position.x;
-        tile_coords.y = edge_is & FACING_DOWN  ? (i32)position.y - 1 : (i32)position.y;
+        tile_coords.x = edge.facing == Facing::Right ? (i32)position.x - 1 : (i32)position.x;
+        tile_coords.y = edge.facing == Facing::Down  ? (i32)position.y - 1 : (i32)position.y;
 
-        texture_u = edge_is & (FACING_LEFT | FACING_RIGHT) ?
+        const bool is_vertical = isVertical(edge.facing);
+
+        corner_fraction = 0.0f;
+        if (corner.rounding != Rounding::None) {
+            vec2 v{(position - center).normalized()};
+            f32 u = atan2(fabsf(v.y), fabsf(v.x));
+            if (corner.rounding == edge.from_corner.rounding &&
+                corner.horizontal == edge.from_corner.horizontal &&
+                corner.vertical == edge.from_corner.vertical) {
+                if (is_vertical) {
+                    corner_fraction = u / (0.25f * pi);
+                    texture_u = rounding_radius * (1.0f - corner_fraction);
+                } else {
+                    texture_u = (u - 0.25f * pi) / (0.25f * pi);
+                    corner_fraction = 1.0f - texture_u;
+                    texture_u *= rounding_radius;
+                }
+            } else {
+                if (is_vertical) {
+                    corner_fraction = u / (0.25f * pi);
+                    texture_u = 1.0f - rounding_radius * (1.0f - corner_fraction);
+                } else {
+                    texture_u = (u - 0.25f * pi) / (0.25f * pi);
+                    corner_fraction = 1.0f - texture_u;
+                    texture_u *= rounding_radius;
+                    texture_u = 1.0f - texture_u;
+                }
+            }
+            corner_fraction = 1.0f - fabsf(u - 0.25f * pi) / (0.25f * pi);;
+            corner_fraction = smoothStep(0.0f, 1.0f, corner_fraction);
+        } else texture_u = is_vertical ?
             position.y - (f32)edge.from.y :
             position.x - (f32)edge.from.x;
 
         texture_u -= (f32)(i32)texture_u;
 
-        if (edge_is & (FACING_RIGHT | FACING_UP))
+        if (edge.facing == Facing::Right ||
+            edge.facing == Facing::Up) {
             texture_u = 1.0f - texture_u;
+        }
     }
 
     INLINE_XPU void finalizeFromColumn(const Circle& column, const vec2 ray_origin, const vec2 ray_direction, const vec2 forward) {
@@ -75,9 +115,9 @@ struct RayHit {
         position += ray_origin;
         tile_coords.x = (i32)position.x;
         tile_coords.y = (i32)position.y;
-        texture_u = getU(position - column.position);
+        texture_u = getU(position - column.position) * (floor(column.radius) + 1.0f) * 3.0f;
         texture_id = 5;
-        edge_is = 0;
+        facing = Facing::NotApplicable;
     }
 };
 
@@ -88,12 +128,13 @@ struct GroundHit {
 };
 
 struct WallHit {
-    vec2 ray_direction, hit_position, hit_normal;
-    f32 u, v, texel_step;
+    vec2 ray_direction, hit_position, hit_normal, hit_center;
+    f32 u, v, texel_step, corner_fraction;
     u16 top, bot, edge_id;
     u8 texture_id;
     u8 mip;
-    u8 edge_is;
+    Facing facing;
+    Rounding rounding;
     u8 column_id;
 
     INLINE_XPU void init() {
@@ -101,7 +142,7 @@ struct WallHit {
     }
 
     INLINE_XPU bool isValid() const {
-        return v >= 0.0f;
+        return v >= 0.0f && (column_id != INVALID_COLUMN_ID || edge_id != INVALID_EDGE_ID);
     }
 
     INLINE_XPU void update(u16 screen_height, f32 texel_size, f32 pixel_coverage_factor, f32 column_height_factor, u8 last_mip, vec2 new_ray_direction, i32 mid_point, const Circle* columns, const RayHit &ray_hit) {
@@ -125,24 +166,40 @@ struct WallHit {
         else
             top = (u16)(mid_point - half_height);
 
-        edge_is = ray_hit.edge_is;
+        corner_fraction = 0.0f;
+        facing = ray_hit.facing;
+        rounding = ray_hit.corner.rounding;
         edge_id = ray_hit.edge_id;
         column_id = ray_hit.column_id;
         hit_position = ray_hit.position;
-        if (column_id != INVALID_COLUMN_ID) {
+        if (column_id != INVALID_COLUMN_ID)
             hit_normal = (hit_position - columns[column_id].position).normalized();
+        else if (rounding == Rounding::None) {
+            hit_normal = 0.0f;
+            switch (facing) {
+                case Facing::Down : hit_normal.y =  1.0f; break;
+                case Facing::Up   : hit_normal.y = -1.0f; break;
+                case Facing::Left : hit_normal.x = -1.0f; break;
+                case Facing::Right: hit_normal.x =  1.0f; break;
+            }
+        } else {
+            corner_fraction = ray_hit.corner_fraction;;
+            hit_center = ray_hit.center;
+            hit_normal = (hit_position - ray_hit.center).normalized();
+            if (rounding == Rounding::Concave)
+                hit_normal = -hit_normal;
         }
     }
 };
 
 struct WallHitGroup {
     WallHit main_hit;
+    WallHit secondary_hit;
     WallHit portal_hits[MAX_PORTAL_DEPTH];
     vec2 portal_origins[MAX_PORTAL_DEPTH];
 };
 
 struct Ray {
-    RayHit hit;
     vec2 origin;
     vec2 direction;
     vec2 forward;
@@ -169,37 +226,36 @@ struct Ray {
         is_facing_down  = direction.y > 0;
         rise_over_run = direction.y / direction.x;
         run_over_rise = 1 / rise_over_run;
-        hit.init();
     }
 
-    INLINE_XPU void finalizeHit(const TileEdge *edges, const Circle* columns, const f32 offset = 0.0f) {
-        hit.distance = sqrtf(hit.distance) + offset;
+    INLINE_XPU void finalizeHit(RayHit& hit, const TileEdge *edges, const Circle* columns, const f32 rounded_corners_radius) {
         if (hit.column_id != INVALID_COLUMN_ID)
             hit.finalizeFromColumn(columns[hit.column_id], origin, direction, forward);
         else
-            hit.finalizeFromEdge(edges[hit.edge_id], origin, forward);
+            hit.finalizeFromEdge(edges[hit.edge_id], origin, forward, rounded_corners_radius);
     }
 
-    INLINE_XPU bool intersectsWithCircle(const Circle& circle) {
-        vec2 C = circle.position - origin;
-        f32 t = C.dot(direction);
-        if (t > 0.0f) {
-            f32 dt = circle.radius * circle.radius - (direction * t - C).squaredLength();
-            if (dt > 0.0f && t*t > dt) { // Inside the sphere
+    INLINE_XPU bool intersectsWithCircle(const vec2 center, f32 radius, f32 &t, const bool from_outside = true) {
+        vec2 C = center - origin;
+        t = C.dot(direction);
+        if (from_outside && t < 0.0f)
+            return false;
+
+        f32 dt = radius * radius - (direction * t - C).squaredLength();
+        if (dt > 0.0f && (!from_outside || t*t > dt)) { // Inside the circle
+            if (from_outside)
                 t -= sqrt(dt);
-                t *= t;
-                if (t < hit.distance) {
-                    hit.distance = t;
-                    return true;
-                }
-            }
+            else
+                t += sqrt(dt);
+
+            return true;
         }
 
         return false;
     }
 
-    INLINE_XPU void intersectWithEdgePlane(const TileEdge& edge) {
-        if (edge.is & (FACING_LEFT | FACING_RIGHT)) {
+    INLINE_XPU void intersectWithEdgePlane(const TileEdge& edge, RayHit& hit) {
+        if (isVertical(edge.facing)) {
             hit.position = (f32)edge.to.x - origin.x;
             hit.position.y *= rise_over_run;
             hit.position += origin;
@@ -210,44 +266,157 @@ struct Ray {
         }
     }
 
-    INLINE_XPU u8 intersectsWithEdge(const TileEdge& edge) {
-        u8 is_visible = edge.isVisible(origin);
-        if (is_visible == 0)
-            return 0;
+    INLINE_XPU bool intersectsWithEdge(const TileEdge& edge, RayHit& hit, const f32 rounding_radius) {
+        Placed placed = edge.isVisible(origin);
+        if (placed == Placed::NotVisible)
+            return false;
 
-        if (edge.is & (FACING_LEFT | FACING_RIGHT)) {
+        hit.corner.rounding = Rounding::None;
+        hit.facing = edge.facing;
+        if (isVertical(edge.facing)) {
             if (is_vertical ||
-                (is_facing_right && (is_visible & ON_THE_LEFT)) ||
-                (is_facing_left && (is_visible & ON_THE_RIGHT)))
-                return 0;
+                (is_facing_right && placed == Placed::OnTheLeft) ||
+                (is_facing_left && placed == Placed::OnTheRight))
+                return false;
 
             hit.position = (f32)edge.to.x - origin.x;
             hit.position.y *= rise_over_run;
             hit.position += origin;
 
             if (inRange((f32)edge.from.y, hit.position.y, (f32)edge.to.y)) {
-                hit.edge_is = edge.is | is_visible;
-                return is_visible;
+                if (rounding_radius > 0.0f) {
+                    hit.distance = hit.position.y - edge.from.y;
+                    if (hit.distance < rounding_radius) {
+                        hit.center = edge.from;
+                        hit.corner = edge.from_corner;
+                        if (edge.facing == Facing::Right) {
+                            if (edge.from_corner.rounding == Rounding::Concave &&
+                                edge.from_corner.horizontal == Facing::Down &&
+                                edge.from_corner.vertical == Facing::Right) {
+                                hit.center += rounding_radius;
+                            } else { // CONVEX | FACING_UP | FACING_RIGHT
+                                hit.center += vec2{-rounding_radius, rounding_radius};
+                            }
+                        } else { // edge.is & FACING_LEFT
+                            if (edge.from_corner.rounding == Rounding::Concave &&
+                                edge.from_corner.horizontal == Facing::Down &&
+                                edge.from_corner.vertical == Facing::Left) {
+                                hit.center += vec2{-rounding_radius, rounding_radius};
+                            } else { // CONVEX | FACING_UP | FACING_LEFT {
+                                hit.center += rounding_radius;
+                            }
+                        }
+                    } else {
+                        hit.distance = edge.to.y - hit.position.y;
+                        if (hit.distance < rounding_radius) {
+                            hit.center = edge.to;
+                            hit.corner = edge.to_corner;
+                            if (edge.facing == Facing::Right) {
+                                if (edge.to_corner.rounding == Rounding::Convex &&
+                                    edge.to_corner.horizontal == Facing::Down &&
+                                    edge.to_corner.vertical == Facing::Right) {
+                                    hit.center -= rounding_radius;
+                                } else { // CONCAVE | FACING_UP | FACING_RIGHT
+                                    hit.center += vec2{rounding_radius, -rounding_radius};
+                                }
+                            } else { // FACING_LEFT
+                                if (edge.to_corner.rounding == Rounding::Convex &&
+                                    edge.to_corner.horizontal == Facing::Down &&
+                                    edge.to_corner.vertical == Facing::Left) {
+                                    hit.center += vec2{rounding_radius, -rounding_radius};
+                                } else { // CONCAVE | FACING_UP | FACING_LEFT
+                                    hit.center -= rounding_radius;
+                                }
+                            }
+                        }
+                    }
+
+                    if (hit.corner.rounding != Rounding::None) {
+                        if (intersectsWithCircle(hit.center, rounding_radius, hit.distance, hit.corner.rounding == Rounding::Convex))
+                            hit.position = origin + direction * hit.distance;
+                        else
+                            return false;
+                    }
+                }
+
+
+                return true;
             }
 
-            return 0;
+            return false;
         }
 
         // Edge is horizontal:
         if (is_horizontal ||
-            (is_facing_up && (is_visible & BELOW)) ||
-            (is_facing_down && (is_visible & ABOVE)))
-            return 0;
+            (is_facing_up && placed == Placed::Below) ||
+            (is_facing_down && placed == Placed::Above))
+            return false;
 
         hit.position = (f32)edge.to.y - origin.y;
         hit.position.x *= run_over_rise;
         hit.position += origin;
 
         if (inRange((f32)edge.from.x, hit.position.x, (f32)edge.to.x)) {
-            hit.edge_is = edge.is | is_visible;
-            return is_visible;
+            if (rounding_radius > 0.0f) {
+                hit.distance = hit.position.x - edge.from.x;
+                if (hit.distance < rounding_radius) {
+                    hit.corner = edge.from_corner;
+                    hit.center = edge.from;
+                    if (edge.facing == Facing::Down) {
+                        if (edge.from_corner.rounding == Rounding::Concave &&
+                            edge.from_corner.horizontal == Facing::Down &&
+                            edge.from_corner.vertical == Facing::Right) {
+                            hit.center += rounding_radius;
+                            } else { // CONVEX | FACING_DOWN | FACING_LEFT
+                                hit.center += vec2{rounding_radius, -rounding_radius};
+                            }
+                    } else { // FACING_UP
+                        if (edge.from_corner.rounding == Rounding::Concave &&
+                            edge.from_corner.horizontal == Facing::Up &&
+                            edge.from_corner.vertical == Facing::Right) {
+                            hit.center += vec2{rounding_radius, -rounding_radius};
+                            } else { // CONVEX_UP_LEFT
+                                hit.center += rounding_radius;
+                            }
+                    }
+                } else {
+                    hit.distance = edge.to.x - hit.position.x;
+                    if (hit.distance < rounding_radius) {
+                        hit.corner = edge.to_corner;
+                        hit.center = edge.to;
+
+                        if (edge.facing == Facing::Down) {
+                            if (edge.to_corner.rounding == Rounding::Convex &&
+                                edge.to_corner.horizontal == Facing::Down &&
+                                edge.to_corner.vertical == Facing::Right) {
+                                hit.center -= rounding_radius;
+                                } else { // CONCAVE | FACING_DOWN | FACING_LEFT
+                                    hit.center += vec2{-rounding_radius, rounding_radius};
+                                }
+                        } else { // FACING_UP
+                            if (edge.to_corner.rounding == Rounding::Convex &&
+                                edge.to_corner.horizontal == Facing::Up &&
+                                edge.to_corner.vertical == Facing::Right) {
+                                hit.center += vec2{-rounding_radius, rounding_radius};
+                                } else { // CONCAVE | FACING_UP | FACING_LEFT
+                                    hit.center -= rounding_radius;
+                                }
+                        }
+                    }
+                }
+
+                if (hit.corner.rounding != Rounding::None) {
+                    if (intersectsWithCircle(hit.center, rounding_radius, hit.distance, hit.corner.rounding == Rounding::Convex))
+                        hit.position = origin + direction * hit.distance;
+                    else
+                        return false;
+                }
+            }
+
+            return true;
         }
-        return 0;
+
+        return false;
     }
 };
 
@@ -259,7 +428,7 @@ struct Portal {
     f32 spawned_time;
     u16 projectile_index;
     u16 edge_id;
-    u8 edge_is;
+    Facing facing;
 
     INLINE_XPU void init() {
         spawned_time = 0.0f;
@@ -267,7 +436,7 @@ struct Portal {
         radius = 0.0f;
         projectile_index = INVALID_PROJECTILE_INDEX;
         edge_id = INVALID_EDGE_ID;
-        edge_is = 0;
+        facing = Facing::NotApplicable;
     }
 
     INLINE_XPU bool isActive() const {
@@ -278,7 +447,7 @@ struct Portal {
         if (ray_hit.edge_id != edge_id)
             return false;
 
-        if (edge_is & (FACING_DOWN | FACING_UP))
+        if (isHorizontal(facing))
             return fabsf(position.x - ray_hit.position.x) < PORTAL_FINAL_RADIUS;
 
         return fabsf(position.z - ray_hit.position.y) < PORTAL_FINAL_RADIUS;
@@ -297,24 +466,24 @@ struct Portal {
         ).squaredLength() < (radius * radius);
     }
 
-    INLINE_XPU i32 getRotation(u8 to_edge_is) const {
+    INLINE_XPU i32 getRotation(const Facing to_edge_facing) const {
         i32 ray_rotation = 0;
-        if (edge_is & (FACING_LEFT | FACING_RIGHT)) {
-            if (to_edge_is & (FACING_DOWN | FACING_UP)) {
-                if (edge_is & FACING_RIGHT)
-                    ray_rotation = (to_edge_is & FACING_UP) ? 90 : -90;
+        if (isVertical(facing)) {
+            if (isHorizontal(to_edge_facing)) {
+                if (facing == Facing::Right)
+                    ray_rotation = (to_edge_facing == Facing::Up) ? 90 : -90;
                 else
-                    ray_rotation = (to_edge_is & FACING_DOWN) ? 90 : -90;
-            } else if ((edge_is & FACING_RIGHT) == (to_edge_is & FACING_RIGHT))
+                    ray_rotation = (to_edge_facing == Facing::Down) ? 90 : -90;
+            } else if ((facing == Facing::Right) == (to_edge_facing == Facing::Right))
                 ray_rotation = 180;
         } else
-            if (to_edge_is & (FACING_LEFT | FACING_RIGHT)) {
-                if (edge_is & FACING_UP)
-                    ray_rotation = (to_edge_is & FACING_LEFT) ? 90 : -90;
+            if (isVertical(to_edge_facing)) {
+                if (facing == Facing::Up)
+                    ray_rotation = (to_edge_facing == Facing::Left) ? 90 : -90;
                 else
-                    ray_rotation = (to_edge_is & FACING_RIGHT) ? 90 : -90;
+                    ray_rotation = (to_edge_facing == Facing::Right) ? 90 : -90;
             } else
-                if ((edge_is & FACING_UP) == (to_edge_is & FACING_UP))
+                if ((facing == Facing::Up) == (to_edge_facing == Facing::Up))
                     ray_rotation = 180;
 
         return ray_rotation;
@@ -329,7 +498,7 @@ struct Portal {
                 position.y = (1.0f - (radius * 2.0f) - PORTAL_BREATHING_RANGE) * (position.y > 0.0f ? 1.0f : -1.0f);
 
             const TileEdge& edge{edges[edge_id]};
-            if (edge.is & (FACING_DOWN | FACING_UP)) {
+            if (isHorizontal(edge.facing)) {
                 if ((position.x + radius + PORTAL_BREATHING_RANGE) > edge.to.x)
                     position.x = edge.to.x - radius - PORTAL_BREATHING_RANGE;
                 else if ((position.x - radius - PORTAL_BREATHING_RANGE) < edge.from.x)
@@ -345,7 +514,7 @@ struct Portal {
     }
 
     INLINE_XPU vec2 teleportTo(const Portal& other_portal, const vec2& origin, i32& rotation) const {
-        rotation = getRotation(other_portal.edge_is);
+        rotation = getRotation(other_portal.facing);
         vec2 origin_to_portal = vec2{position.x, position.z} - origin;
         origin_to_portal.rotateBy(rotation);
         return vec2{other_portal.position.x, other_portal.position.z} - origin_to_portal;
@@ -438,6 +607,7 @@ struct Portals {
 struct RayCast {
     Portals portals;
     RayHit closest_hit;
+    RayHit second_closest_hit;
     Ray ray;
     vec2 position;
     vec2 forward;
@@ -451,45 +621,65 @@ struct RayCast {
     f32 column_height_factor;
     u8 last_mip;
 
-    INLINE_XPU bool castRay(const vec2& ray_origin, const vec2& ray_direction, const vec2& ray_forward, const Slice<TileEdge> &edges, const Slice<Circle> &columns, const bool check_columns = true) {
+    INLINE_XPU bool castRay(const vec2& ray_origin, const vec2& ray_direction, const vec2& ray_forward, const Slice<TileEdge> &edges, const Slice<Circle> &columns, const f32 rounded_corners_radius, const bool check_columns = true) {
+        RayHit hit;
+        hit.init();
         closest_hit.init();
         closest_hit.distance = 10000000;
 
         ray.update(ray_origin, ray_direction, ray_forward);
 
         for (u16 i = 0; i < (u16)edges.size; i++) {
-            if (ray.intersectsWithEdge(edges.data[i])) {
-                ray.hit.distance = (ray.hit.position - ray.origin).squaredLength();
-                if (ray.hit.distance < closest_hit.distance) {
-                    closest_hit = ray.hit;
+            if (ray.intersectsWithEdge(edges.data[i], hit, rounded_corners_radius)) {
+                hit.distance = (hit.position - ray.origin).squaredLength();
+                if (hit.distance < closest_hit.distance) {
+                    second_closest_hit = closest_hit;
+                    closest_hit = hit;
                     closest_hit.edge_id = i;
+                } else if (hit.distance < second_closest_hit.distance) {
+                    second_closest_hit = hit;
+                    second_closest_hit.edge_id = i;
                 }
             }
         }
 
-        ray.hit = closest_hit;
+        closest_hit.distance = sqrtf(closest_hit.distance);
+        second_closest_hit.distance = sqrtf(second_closest_hit.distance);
 
         if (check_columns) {
+            f32 t;
             for (u8 i = 0; i < (u8)columns.size; i++) {
-                if (ray.intersectsWithCircle(columns[i])) {
-                    ray.hit.column_id = i;
-                    ray.hit.edge_id = INVALID_EDGE_ID;
-                    ray.hit.edge_is = 0;
+                if (ray.intersectsWithCircle(columns[i].position, columns[i].radius, t)) {
+                    if (t < closest_hit.distance) {
+                        second_closest_hit = closest_hit;
+                        closest_hit.distance = t;
+                        closest_hit.column_id = i;
+                        closest_hit.edge_id = INVALID_EDGE_ID;
+                        closest_hit.facing = Facing::NotApplicable;
+                    } else if (t < second_closest_hit.distance) {
+                        second_closest_hit.distance = t;
+                        second_closest_hit.column_id = i;
+                        second_closest_hit.edge_id = INVALID_EDGE_ID;
+                        second_closest_hit.facing = Facing::NotApplicable;
+                    }
                 }
             }
         }
 
-        return ray.hit.isValid();
+        return closest_hit.isValid();
     }
 
-    INLINE_XPU void generateWallHit(WallHitGroup &wall_hit_group, vec2 ray_direction, const Slice<TileEdge> &edges, const Slice<Circle> &columns) {
+    INLINE_XPU void generateWallHit(WallHitGroup &wall_hit_group, vec2 ray_direction, const Slice<TileEdge> &edges, const Slice<Circle> &columns, const f32 rounded_corners_radius) {
         wall_hit_group.main_hit.init();
-        if (castRay(position, ray_direction, forward, edges, columns))
-            ray.finalizeHit(edges.data, columns.data);
+        if (castRay(position, ray_direction, forward, edges, columns, rounded_corners_radius)) {
+            ray.finalizeHit(closest_hit, edges.data, columns.data, rounded_corners_radius);
+            ray.finalizeHit(second_closest_hit, edges.data, columns.data, rounded_corners_radius);
+        }
         else
             return;
 
-        wall_hit_group.main_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+        wall_hit_group.main_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, closest_hit);
+        wall_hit_group.secondary_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, second_closest_hit);
 
         if (!portals.areBothActive())
             return;
@@ -501,7 +691,7 @@ struct RayCast {
             vec2& portal_origin{wall_hit_group.portal_origins[p]};
 
             const Portal* other_portal = nullptr;
-            const Portal* portal = portals.getPortalsFromRayHit(ray.hit, &other_portal);
+            const Portal* portal = portals.getPortalsFromRayHit(closest_hit, &other_portal);
 
             if (portal == nullptr)
                 return;
@@ -509,15 +699,16 @@ struct RayCast {
             i32 rotation = 0;
             portal_origin = portal->teleportTo(*other_portal, prior_position, rotation);
             vec2 ray_forward = prior_forward.rotatedBy(rotation);
-            vec2 origin_to_hit_position = (ray.hit.position - prior_position).rotatedBy(rotation);
+            vec2 origin_to_hit_position = (closest_hit.position - prior_position).rotatedBy(rotation);
             ray_direction.rotateBy(rotation);
 
-            f32 prior_distance = ray.hit.distance;
+            f32 prior_distance = closest_hit.distance;
             portal_hit.init();
-            if (castRay(portal_origin + origin_to_hit_position, ray_direction, ray_forward, edges, columns)) {
+            if (castRay(portal_origin + origin_to_hit_position, ray_direction, ray_forward, edges, columns, rounded_corners_radius)) {
                 ray.origin = portal_origin;
-                ray.finalizeHit(edges.data, columns.data, prior_distance);
-                portal_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, ray.hit);
+                closest_hit.distance += prior_distance;
+                ray.finalizeHit(closest_hit, edges.data, columns.data, rounded_corners_radius);
+                portal_hit.update(screen_height, texel_size, pixel_coverage_factor, column_height_factor, last_mip, ray_direction, mid_point, columns.data, closest_hit);
             }
             prior_position = portal_origin;
             prior_forward = ray_forward;

@@ -854,8 +854,10 @@ struct PixelShader {
 
                             ray.hit.distance  = closest_hit_distance;
 
+                            f32 t;
                             for (u8 c = 0; c < (u8)columns.size; c++)
-                                ray.intersectsWithCircle(columns[c]);
+                                if (ray.intersectsWithCircle(columns[c], t) && t < ray.hit.distance)
+                                    ray.hit.distance = t;
 
                             if (ray.hit.distance < distance_2d_squared)
                                 continue;
