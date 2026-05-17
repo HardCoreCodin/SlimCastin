@@ -166,12 +166,12 @@ struct PixelShader {
     }
 
     INLINE_XPU f32 parallaxOcclusionMap(const WallHit& wall_hit, bool check_silhouette = true) {
-        const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
+        const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[mip_level]};
         f32 curr_depth_map_value = depth_texture.sampleColor(u, v).r;
         if (curr_depth_map_value == 0.0f)
             return 0.0f;
 
-
+        f32 silhouette_factor = fminf(fabsf(V.x), fabsf(V.z));
         f32 circle_uv_scale = 1.0f;
         f32 corner_fraction = 1.0f;
         vec2 circle_center{};
@@ -180,18 +180,22 @@ struct PixelShader {
                 circle_center = columns[wall_hit.column_id].position;
                 const f32 radius = columns[wall_hit.column_id].radius;
                 circle_uv_scale = pi * 2.0f / (3.0f * lerp((f32)((i32)radius + 1), (f32)((i32)radius + 2), fractionOf(radius)));
+                silhouette_factor *= lerp(0.75f, 6.0f, radius);
                 break;
             }
             case HitKind::RoundedCorner:
                 circle_center = wall_hit.hit_center;
                 corner_fraction = wall_hit.corner_fraction;
-                circle_uv_scale = 0.25f * pi  * (1.0f + render_state.rounded_corners_radius * 4.0f);
+                silhouette_factor *= corner_fraction * render_state.rounded_corners_scale;
+                circle_uv_scale = 0.25f * pi * render_state.rounded_corners_scale;
                 break;
         }
-        const f32 silhouette_factor = corner_fraction * fminf(fabsf(V.x), fabsf(V.z));
 
         // calculate the size of each layer
-        const f32 layer_height = 1.0f / lerp(64.0f, 32.0f, NdotV * (1.0f - silhouette_factor));
+        const f32 layer_height = 1.0f / lerp(
+            (f32)render_state.parallax_occlusion_max_steps,
+            (f32)render_state.parallax_occlusion_min_steps,
+            NdotV * (1.0f - silhouette_factor));
         const f32 scale = layer_height * render_state.parallax_occlusion_scale;
         vec2 d_uv = parallaxViewDir(wall_hit, V) * scale * lerp(1.0f, circle_uv_scale, corner_fraction);
 
@@ -223,7 +227,7 @@ struct PixelShader {
 
                 if (check_silhouette) {
                     const f32 N2DdotV = N2d.dot(V2d);
-                    z += N2DdotV * scale * silhouette_factor * (N2DdotV < 0.0f ? 8.0f : 0.075f);
+                    z += N2DdotV * scale * silhouette_factor * (N2DdotV < 0.0f ? (f32)render_state.parallax_occlusion_max_steps : 1.0f);//0.075f);
                     if (z < 0.0f)
                         return -1.0f;
                 }

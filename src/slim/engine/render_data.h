@@ -102,7 +102,7 @@ struct RenderState {
     vec3 lights_through_portal_from[MAX_POINT_LIGHTS];
     vec3 lights_through_portal_to[MAX_POINT_LIGHTS];
     vec2 hovered_pos;
-    f32 time, parallax_occlusion_scale, rounded_corners_radius;
+    f32 time, parallax_occlusion_scale, rounded_corners_radius, rounded_corners_scale;
     RenderMode render_mode;
     BRDFType brdf;
     Edit edit;
@@ -112,6 +112,8 @@ struct RenderState {
     u8 light_count;
     u8 enemy_count;
     u8 step_count;
+    u8 parallax_occlusion_max_steps;
+    u8 parallax_occlusion_min_steps;
     u8 p[512];
 
     void init() {
@@ -121,8 +123,12 @@ struct RenderState {
 #ifdef __CUDACC__
         flags |= CAST_SHADOWS | VOLUMETRIC;
         step_count = 128;
+        parallax_occlusion_max_steps = 64;
+        parallax_occlusion_min_steps = 32;
 #else
         step_count = 1;
+        parallax_occlusion_max_steps = 32;
+        parallax_occlusion_min_steps = 8;
 #endif
         render_mode = DEFAULT_RENDER_MODE;
         hovered_pos = 0.0f;

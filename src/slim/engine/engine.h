@@ -281,6 +281,7 @@ struct Engine {
         torch.flicker(torch_light_color, torch_light_intensity, render_state.time);
 
         renderer.portals.update(render_state.time, tile_map.edges.data);
+        render_state.rounded_corners_scale = lerp(0.75f, 6.0f, (render_state.rounded_corners_radius - 0.1f) * 2.0f);
 
         if (render_state.enemy_count) updateEnemies();
         if (projectile_count) updateProjectiles(delta_time);
