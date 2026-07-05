@@ -112,6 +112,7 @@ struct RenderState {
     u8 light_count;
     u8 enemy_count;
     u8 step_count;
+    u8 mip_bias;
     u8 parallax_occlusion_max_steps;
     u8 parallax_occlusion_min_steps;
     u8 p[512];
@@ -134,6 +135,7 @@ struct RenderState {
         hovered_pos = 0.0f;
         light_count = 1;
         enemy_count = 0;
+        mip_bias = 0;
         time = 0.0f;
         parallax_occlusion_scale = 0.14f;
         rounded_corners_radius = 0.2f;
@@ -155,7 +157,7 @@ struct RenderState {
         for (int i=0; i < 256 ; i++) p[256+i] = p[i] = permutation[i];
     }
 
-    INLINE_XPU f32 noise(const vec3& P) const {
-        return 0.5f + 0.5f * perlinNoise(P + time, p);
+    INLINE_XPU f32 noise(const vec3& P, const vec3& speed = 1.0f, const f32 scale = 1.0f) const {
+        return 0.5f + 0.5f * perlinNoise(scale * P + speed * time, p);
     }
 };

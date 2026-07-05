@@ -135,8 +135,11 @@ struct DungeonCrawler : SlimApp {
 	TileMap& tile_map{engine.tile_map};
 	u8& flags{render_state.flags};
 	u8& step_count{render_state.step_count};
+	u8& mip_bias{render_state.mip_bias};
 	f32& time{render_state.time};
 
+	bool fog_enabled = false;
+	bool parallax_enabled = false;
 	bool shadows_enabled = true;
 	bool AO_map_enabled = true;
 	bool normal_map_enabled = true;
@@ -146,12 +149,16 @@ struct DungeonCrawler : SlimApp {
     HUDLine FPS {"FPS : "};
     HUDLine GPU {"GPU : ", "Off", "On", &renderer.useGPU};
     HUDLine Mode{"Mode: ", "Beauty"};
+    HUDLine BRDF{"BRDF: ", "GGX"};
     HUDLine VolumeSteps {"Steps: "};
+    HUDLine MipBias {"Mip Bias: "};
+    HUDLine Fog{"Fog: ", "Off", "On", &fog_enabled};
     HUDLine Shadows{"Shadows: ", "Off", "On", &shadows_enabled};
+    HUDLine Parallax{"Parallax: ", "Off", "On", &parallax_enabled};
     HUDLine Normal{"Normal : ", "Off", "On", &normal_map_enabled};
     HUDLine AO{"AO : ", "Off", "On", &AO_map_enabled};
     HUDLine Roughness{"Roughness : ", "Off", "On", &roughness_map_enabled};
-    HUD hud{{7}, &FPS};
+    HUD hud{{12}, &FPS};
 
 	bool initted = false;
 	bool fired_flare = false;
@@ -162,6 +169,7 @@ struct DungeonCrawler : SlimApp {
         i32 fps = (i32)render_timer.average_frames_per_second;
         FPS.value = fps;
         FPS.value_color = fps >= 60 ? Green : (fps >= 24 ? Cyan : (fps < 12 ? Red : Yellow));
+		MipBias.value = (i32)mip_bias;
     	VolumeSteps.value = (i32)step_count;
     	if (renderer.useGPU)
     		VolumeSteps.value_color = step_count ? (step_count >= 64 ? Red : (step_count >= 16 ? Yellow : Cyan)) : Grey;
@@ -245,6 +253,8 @@ struct DungeonCrawler : SlimApp {
         	if (key == 'N') flags = flags & USE_NORMAL_MAP ? (flags & ~USE_NORMAL_MAP) : (flags | USE_NORMAL_MAP);
         	if (key == 'R') flags = flags & USE_ROUGHNESS_MAP ? (flags & ~USE_ROUGHNESS_MAP) : (flags | USE_ROUGHNESS_MAP);
         	if (key == 'H') flags = flags & CAST_SHADOWS ? (flags & ~CAST_SHADOWS) : (flags | CAST_SHADOWS);
+    		if (key == 'U') flags = flags & PARALLAX_OCCLUSION ? (flags & ~PARALLAX_OCCLUSION) : (flags | PARALLAX_OCCLUSION);
+    		if (key == 'E') flags = flags & EXPONENTIAL_FOG ? (flags & ~EXPONENTIAL_FOG) : (flags | EXPONENTIAL_FOG);
     		if (key == 'V') {
     			if (controls::is_pressed::shift)
     				flags = flags & VOLUMETRIC_SHADOWS ? (flags & ~VOLUMETRIC_SHADOWS) : (flags | VOLUMETRIC_SHADOWS);
@@ -266,6 +276,8 @@ struct DungeonCrawler : SlimApp {
     			step_count = step_count ? step_count << 1 : 1;
     		if (key == controls::key_map::down && step_count)
     			step_count = step_count == 1 ? 0 : step_count >> 1;
+    		if (key == controls::key_map::right && mip_bias < textures[0].mip_count) mip_bias++;
+    		if (key == controls::key_map::left && mip_bias > 0) mip_bias--;
             switch (render_mode) {
                 case RenderMode_Beauty:     Mode.value.string = "Beauty"; break;
                 case RenderMode_Untextured: Mode.value.string = "Untextured"; break;
@@ -278,25 +290,23 @@ struct DungeonCrawler : SlimApp {
             	case RenderMode_Normal:     Mode.value.string = "Normal"; break;
             	case RenderMode_Light:      Mode.value.string = "Lighting"; break;
             }
+    		fog_enabled = flags & EXPONENTIAL_FOG;
+    		parallax_enabled = flags & PARALLAX_OCCLUSION;
     		shadows_enabled = flags & CAST_SHADOWS;
         	AO_map_enabled = flags & USE_AO_MAP;
         	normal_map_enabled = flags & USE_NORMAL_MAP;
         	roughness_map_enabled = flags & USE_ROUGHNESS_MAP;
-        	// switch ((BRDFType)(flags & 3)) {
-        	// 	case BRDF_Lambert: BRDF.value.string = "Lambert"; break;
-        	// 	case BRDF_Blinn: BRDF.value.string = "Blinn"; break;
-        	// 	case BRDF_Phong: BRDF.value.string = "Phong"; break;
-        	// 	case BRDF_GGX: BRDF.value.string = "GGX"; break;
-        	// }
+        	switch (render_state.brdf) {
+        		case BRDF_Lambert: BRDF.value.string = "Lambert"; break;
+        		case BRDF_Blinn: BRDF.value.string = "Blinn"; break;
+        		case BRDF_Phong: BRDF.value.string = "Phong"; break;
+        		case BRDF_GGX: BRDF.value.string = "GGX"; break;
+        	}
         }
-        Move &move = navigation.move;
-        Turn &turn = navigation.turn;
-        if (key == 'E') turn.left     = is_pressed;
-        if (key == 'Q') turn.right    = is_pressed;
-        if (key == 'W') move.forward  = is_pressed;
-        if (key == 'S') move.backward = is_pressed;
-        if (key == 'A') move.left     = is_pressed;
-        if (key == 'D') move.right    = is_pressed;
+        if (key == 'W') navigation.move.forward  = is_pressed;
+        if (key == 'S') navigation.move.backward = is_pressed;
+        if (key == 'A') navigation.move.left     = is_pressed;
+        if (key == 'D') navigation.move.right    = is_pressed;
     }
 
     void OnWindowResize(u16 width, u16 height) override {

@@ -14,9 +14,11 @@
 #define CAST_SHADOWS       (1 << 0)
 #define VOLUMETRIC_SHADOWS (1 << 1)
 #define VOLUMETRIC         (1 << 2)
-#define USE_ROUGHNESS_MAP  (1 << 3)
-#define USE_AO_MAP         (1 << 4)
-#define USE_NORMAL_MAP     (1 << 5)
+#define PARALLAX_OCCLUSION (1 << 3)
+#define EXPONENTIAL_FOG    (1 << 4)
+#define USE_ROUGHNESS_MAP  (1 << 5)
+#define USE_AO_MAP         (1 << 6)
+#define USE_NORMAL_MAP     (1 << 7)
 #define USE_MAPS_MASK (USE_ROUGHNESS_MAP | USE_AO_MAP | USE_NORMAL_MAP)
 
 #define MAX_POINT_LIGHTS 16
@@ -48,4 +50,4 @@
 #define INITIAL_COLUMN_RADIUS 0.1f
 #define BODY_RADIUS 0.3f
 #define PROJECTILE_RADIUS 0.2f
-#define PROJECTILE_SPEED 0.3f
+#define PROJECTILE_SPEED 3.0f

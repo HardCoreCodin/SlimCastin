@@ -324,6 +324,9 @@ struct PixelShader {
                 hit_kind = HitKind::RoundedCorner;
         }
 
+        mip_level += render_state.mip_bias;
+        if (mip_level >= render_data.textures[0].mip_count) mip_level = render_data.textures[0].mip_count - 1;
+
         V = Ro - hitP;
         hit_distance = V.length();
         V /= hit_distance;
@@ -357,7 +360,7 @@ struct PixelShader {
 
         use_secondary_hit = false;
         parallax_occlusion_depth = 0.0f;
-        if (render_state.parallax_occlusion_scale > 0.0f && NdotV > 0.0f) {
+        if ((render_state.flags & PARALLAX_OCCLUSION) && render_state.parallax_occlusion_scale > 0.0f && NdotV > 0.0f) {
             const bool check_silhouette = (hit_kind == HitKind::Column ||
                                           (hit_kind == HitKind::RoundedCorner &&
                                           wall_hit.rounding != Rounding::Concave)) &&
@@ -573,6 +576,11 @@ struct PixelShader {
         return true;
     }
 
+    INLINE_XPU f32 exponentialFog(const f32 density, const f32 T, const f32 T2, const f32 Ky) {
+        const f32 KyTb = Ky * density * T;
+        return (1.0f - exp(-KyTb)) / (KyTb * T2);
+    }
+
     INLINE_XPU Color render(const WallHit& wall_hit) {
         Color pixel = Magenta;
         if (render_state.render_mode == RenderMode_Beauty ||
@@ -737,32 +745,14 @@ struct PixelShader {
                             if (hitN.dot(L) < 0.0f)
                                 continue;
 
-                            if (parallax_occlusion_depth > 0.0f) {
-                                const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[0]};
+                            if ((render_state.flags & PARALLAX_OCCLUSION) && parallax_occlusion_depth > 0.0f) {
+                                const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[mip_level]};
 
                                 // calculate the size of each layer
                                 f32 layer_height = 1.0f / lerp(32.0f, 8.0f, clampedValue(hitN.dot(L)));
                                 const vec2 d_uv = parallaxViewDir(wall_hit, L) * layer_height * render_state.parallax_occlusion_scale;
                                 vec2 uv = {u, v};
 
-                                // f32 sh0 = parallax_occlusion_depth;
-                                // uv = vec2{u, v} + d_uv * 0.88f;
-                                // f32 shA = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.88f) * 1.0f;
-                                // uv = vec2{u, v} + d_uv * 0.77f;
-                                // f32 sh9 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.77f) * 2.0f;
-                                // uv = vec2{u, v} + d_uv * 0.66f;
-                                // f32 sh8 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.66f) * 4.0f;
-                                // uv = vec2{u, v} + d_uv * 0.55f;
-                                // f32 sh7 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.55f) * 6.0f;
-                                // uv = vec2{u, v} + d_uv * 0.44f;
-                                // f32 sh6 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.44f) * 8.0f;
-                                // uv = vec2{u, v} + d_uv * 0.33f;
-                                // f32 sh5 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.33f) * 10.0f;
-                                // uv = vec2{u, v} + d_uv * 0.22f;
-                                // f32 sh4 = -(depth_texture.sampleColor(uv.x, uv.y).r - sh0 - 0.22f) * 12.0f;
-                                // shadow_opacity = fmaxf( fmaxf( fmaxf( fmaxf( fmaxf( fmaxf( shA, sh9 ), sh8 ), sh7 ), sh6 ), sh5 ), sh4 );
-                                // shadow_opacity = shadow_opacity * 0.25f;
-                                // shadow_opacity = 1 - shadow_opacity;
 
                                 f32 curr_depth_map_value = parallax_occlusion_depth;
 
@@ -850,6 +840,22 @@ struct PixelShader {
             (render_state.edit == Edit::Columns || render_state.edit == Edit::Enemies) &&
             (ground_hit_position - render_state.hovered_pos).squaredLength() < (render_state.edit == Edit::Enemies ? 0.15f : 0.02f)) {
             pixel = pixel.lerpTo(Color(render_state.edit == Edit::Enemies ? Magenta : (render_state.edit == Edit::Walls ? Cyan : Yellow)), 0.02f);
+        }
+
+        // Fog:
+        if (render_state.flags & EXPONENTIAL_FOG) {
+            const f32 T2 = (vec3(ground_hit_position.x, -1.0f, ground_hit_position.y) - Ro).squaredLength();
+            const f32 T = sqrtf(T2);
+            const f32 Ky = V.y == 0.0f ? -0.001f : -V.y;
+
+            const f32 fine_fog_density = render_state.noise(P, vec3{0.35f, 0.5f, 0.25f}, 2.5f) * 4.0f;
+            const f32 course_fog_density = render_state.noise(P, vec3{0.25f, 0.3f, -0.35f}, 0.75f) * 6.0f;
+            const f32 base_fog = exponentialFog(2.0f, T, T2, Ky);
+            const f32 fine_fog = exponentialFog(fine_fog_density, T, T2, Ky);
+            const f32 course_fog = exponentialFog(course_fog_density, T, T2, Ky);
+            pixel = pixel.lerpTo(Color(0.3f, 0.5f, 0.5f), base_fog * 0.04f);
+            pixel = pixel.lerpTo(Color(0.3f, 0.4f, 0.5f), fine_fog * 0.03f);
+            pixel = pixel.lerpTo(Color(0.3f, 0.3f, 0.5f), course_fog * 0.02f);
         }
 
         return pixel;

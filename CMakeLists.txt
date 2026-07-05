@@ -53,7 +53,7 @@ endif()
 
 
 target_compile_options(DungeonCrawler PUBLIC
-        $<$<CONFIG:RELEASE>:-O2>
+        $<$<CONFIG:RELEASE>:-O3>
         $<$<CONFIG:RELEASE>:-Oi>
 #        $<$<CONFIG:RELEASE>:-Mt>
         $<$<CONFIG:DEBUG>:-JMC>
