@@ -1163,9 +1163,9 @@ struct TiledGridInfo {
     u32 tile_size = 0;
     u32 rows = 0;
     u32 columns = 0;
+    u32 right_column = 0;
     u32 right_halo = 0;
     u32 bottom_halo = 0;
-    u32 right_column = 0;
     u32 bottom_row = 0;
     u32 right_column_tile_stride = 0;
     u32 right_column_tile_size = 0;
@@ -1230,7 +1230,7 @@ union ImageFlags {
         unsigned int alpha:1;
         unsigned int linear:1;
         unsigned int tile:1;
-        unsigned int channel:1;
+        unsigned int single:1;
         unsigned int mipmap:1;
         unsigned int flip:1;
         unsigned int wrap:1;
@@ -1249,7 +1249,7 @@ struct ImageInfo : TiledGridDimensions {
 template <typename T>
 struct Image : ImageInfo {
     T* content = nullptr;
-    INLINE_XPU T* operator[] (int row) const { return content + row*(flags.channel ? (width * (flags.alpha ? 4 : 3)) : width); }
+    INLINE_XPU T* operator[] (int row) const { return content + row*(flags.single ? width : (width * (flags.alpha ? 4 : 3))); }
 };
 
 struct PixelImage : Image<Pixel> {};

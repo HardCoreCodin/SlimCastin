@@ -2,19 +2,18 @@
 
 #include "./base.h"
 
-struct TexelQuadComponent {
+struct Texel {
     u8 TL, TR, BL, BR;
 };
 
 struct TexelQuad {
-    TexelQuadComponent R, G, B;
+    Texel R, G, B;
 };
 
-struct TextureMip {
-    u32 width, height;
-    TexelQuad *texel_quads;
+struct TexelSampler {
+    f32 tl, tr, bl, br;
 
-    INLINE_XPU Color sampleColor(f32 u, f32 v) const {
+    INLINE_XPU u32 init(f32 u, f32 v, const u32 width, const u32 height) {
         if (u < 0.0f) u += 10.0f;
         if (v < 0.0f) v += 10.0f;
         u -= (f32)((u32)u);
@@ -28,31 +27,51 @@ struct TextureMip {
         const f32 b = V - (f32)y;
         const f32 l = 1 - r;
         const f32 t = 1 - b;
-        const f32 tl = t * l * COLOR_COMPONENT_TO_FLOAT;
-        const f32 tr = t * r * COLOR_COMPONENT_TO_FLOAT;
-        const f32 bl = b * l * COLOR_COMPONENT_TO_FLOAT;
-        const f32 br = b * r * COLOR_COMPONENT_TO_FLOAT;
+        tl = t * l * COLOR_COMPONENT_TO_FLOAT;
+        tr = t * r * COLOR_COMPONENT_TO_FLOAT;
+        bl = b * l * COLOR_COMPONENT_TO_FLOAT;
+        br = b * r * COLOR_COMPONENT_TO_FLOAT;
 
-        const TexelQuad texel_quad = texel_quads[y * (width + 1) + x];
+        return y * (width + 1) + x;
+    }
+
+    INLINE_XPU f32 sample(const Texel* C) {
+        return fast_mul_add((f32)C->BR, br, fast_mul_add((f32)C->BL, bl, fast_mul_add((f32)C->TR, tr, (f32)C->TL * tl)));
+    }
+};
+
+struct TextureMip {
+    u32 width, height;
+    Texel *texels;
+
+    INLINE_XPU f32 sampleFloat(const f32 u, const f32 v, const u8 channel_count) const {
+        TexelSampler sampler;
+        const Texel *texel = texels + sampler.init(u, v, width, height) * channel_count;
+        return sampler.sample(texel);
+    }
+
+    INLINE_XPU Color sampleColor(const f32 u, const f32 v, const u8 channel_count) const {
+        TexelSampler sampler;
+        const Texel *texel = texels + sampler.init(u, v, width, height) * channel_count;
         return {
-            fast_mul_add((f32)texel_quad.R.BR, br, fast_mul_add((f32)texel_quad.R.BL, bl, fast_mul_add((f32)texel_quad.R.TR, tr, (f32)texel_quad.R.TL * tl))),
-            fast_mul_add((f32)texel_quad.G.BR, br, fast_mul_add((f32)texel_quad.G.BL, bl, fast_mul_add((f32)texel_quad.G.TR, tr, (f32)texel_quad.G.TL * tl))),
-            fast_mul_add((f32)texel_quad.B.BR, br, fast_mul_add((f32)texel_quad.B.BL, bl, fast_mul_add((f32)texel_quad.B.TR, tr, (f32)texel_quad.B.TL * tl)))
+            sampler.sample(  texel),
+            sampler.sample(++texel),
+            sampler.sample(++texel)
         };
     }
 
-    INLINE_XPU Pixel sample(f32 u, f32 v) const {
+    INLINE_XPU Pixel sample(const f32 u, const f32 v, const u8 channel_count) const {
         return {
-            sampleColor(u, v),
+            sampleColor(u, v, channel_count),
             1.0f
-    };
+        };
     }
 };
 
 struct Texture : ImageInfo {
     TextureMip *mips = nullptr;
 
-    XPU static u32 GetMipLevel(f32 texel_area, u32 mip_count) {
+    XPU static u32 GetMipLevel(f32 texel_area, const u32 mip_count) {
         u32 mip_level = 0;
         while (texel_area > 1 && ++mip_level < mip_count) texel_area *= 0.25f;
         if (mip_level >= mip_count)
@@ -61,20 +80,28 @@ struct Texture : ImageInfo {
         return mip_level;
     }
 
-    XPU static u32 GetMipLevel(u32 width, u32 height, u32 mip_count, f32 uv_coverage) {
+    XPU static u32 GetMipLevel(const u32 width, const u32 height, const u32 mip_count, const f32 uv_coverage) {
         return GetMipLevel(uv_coverage * (f32)(width * height), mip_count);
     }
 
-    XPU static u32 GetMipLevel(const Texture &texture, f32 uv_coverage) {
+    XPU static u32 GetMipLevel(const Texture &texture, const f32 uv_coverage) {
         return GetMipLevel(uv_coverage * (f32)(texture.width * texture.height), texture.mip_count);
     }
 
-    INLINE_XPU u32 mipLevel(f32 uv_coverage) const {
-        return GetMipLevel(uv_coverage * (f32)(width * height), mip_count);
+    INLINE_XPU u32 mipLevel(const f32 uv_coverage) const {
+        return flags.mipmap ? GetMipLevel(uv_coverage, uv_coverage) : 0;
     }
 
-    INLINE_XPU Pixel sample(f32 u, f32 v, f32 uv_coverage) const {
-        return mips[flags.mipmap ? GetMipLevel(uv_coverage * (f32)(width * height), mip_count) : 0].sample(u, v);
+    INLINE_XPU Pixel sample(const f32 u, const f32 v, const f32 uv_coverage) const {
+        return mips[mipLevel(uv_coverage)].sample(u, v, flags.single ? 1 : 3);
+    }
+
+    INLINE_XPU Color sampleColor(const f32 u, const f32 v, const u8 mip_level) const {
+        return mips[mip_level].sampleColor(u, v, flags.single ? 1 : 3);
+    }
+
+    INLINE_XPU f32 sampleFloat(const f32 u, const f32 v, const u8 mip_level) const {
+        return mips[mip_level].sampleFloat(u, v, flags.single ? 1 : 3);
     }
 
     INLINE_XPU Pixel sampleCube(f32 X, f32 Y, f32 Z) const {
@@ -120,7 +147,7 @@ struct Texture : ImageInfo {
             }
         }
 
-        return mips[mip].sample(u, v);
+        return mips[mip].sample(u, v, flags.single ? 1 : 3);
     }
 
 //    INLINE_XPU Pixel sampleCube(f32 x, f32 y, f32 z) const {

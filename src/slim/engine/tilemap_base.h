@@ -78,10 +78,10 @@ struct TileEdge {
         }
 
         if (!(
-            facing == Facing::Left  && placed == Placed::OnTheRight ||
-            facing == Facing::Right && placed == Placed::OnTheLeft ||
-            facing == Facing::Down  && placed == Placed::Above ||
-            facing == Facing::Up    && placed == Placed::Below))
+            (facing == Facing::Left  && placed == Placed::OnTheRight) ||
+            (facing == Facing::Right && placed == Placed::OnTheLeft) ||
+            (facing == Facing::Down  && placed == Placed::Above) ||
+            (facing == Facing::Up    && placed == Placed::Below)))
             placed = Placed::NotVisible;
 
         return placed;

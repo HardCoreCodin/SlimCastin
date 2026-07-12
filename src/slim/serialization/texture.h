@@ -5,18 +5,18 @@
 
 
 u32 getSizeInBytes(const Texture &texture) {
+    const u32 texel_size = sizeof(Texel) * (texture.flags.single ? 1 : 3);
     u32 mip_width  = texture.width;
     u32 mip_height = texture.height;
     u32 memory_size = 0;
-
     if (texture.flags.cubemap) {
         mip_height = texture.height + 1;
         mip_width = texture.height * 4 + 1;
-        memory_size = sizeof(TextureMip) * 3 + sizeof(TexelQuad) * (mip_height * (mip_width + 2 * mip_height));
+        memory_size = sizeof(TextureMip) * 3 + texel_size * (mip_height * (mip_width + 2 * mip_height));
     } else {
         do {
             memory_size += sizeof(TextureMip);
-            memory_size += (mip_width + 1) * (mip_height + 1) * sizeof(TexelQuad);
+            memory_size += (mip_width + 1) * (mip_height + 1) * texel_size;
 
             mip_width /= 2;
             mip_height /= 2;
@@ -27,22 +27,25 @@ u32 getSizeInBytes(const Texture &texture) {
 }
 
 bool allocateMemory(Texture &texture, memory::MonotonicAllocator *memory_allocator) {
+    const u32 texel_size = sizeof(Texel) * (texture.flags.single ? 1 : 3);
     u32 size = getSizeInBytes(texture);
     if (size > (memory_allocator->capacity - memory_allocator->occupied)) return false;
     texture.mips = (TextureMip*)memory_allocator->allocate(sizeof(TextureMip) * texture.mip_count);
     TextureMip *texture_mip = texture.mips;
     u32 mip_width  = texture.width;
     u32 mip_height = texture.height;
+    texture_mip->texels = nullptr;
 
     if (texture.flags.cubemap) {
         mip_height = texture.height + 1;
         mip_width = texture.height * 4 + 1;
-        (texture_mip++)->texel_quads = (TexelQuad*)memory_allocator->allocate(sizeof(TexelQuad) * mip_width * mip_height);
-        (texture_mip++)->texel_quads = (TexelQuad*)memory_allocator->allocate(sizeof(TexelQuad) * mip_height * mip_height);
-        (texture_mip++)->texel_quads = (TexelQuad*)memory_allocator->allocate(sizeof(TexelQuad) * mip_height * mip_height);
+        (texture_mip++)->texels = (Texel*)memory_allocator->allocate(texel_size * mip_width * mip_height);
+        (texture_mip++)->texels = (Texel*)memory_allocator->allocate(texel_size * mip_width * mip_height);
+        (texture_mip++)->texels = (Texel*)memory_allocator->allocate(texel_size * mip_width * mip_height);
     } else {
         do {
-            texture_mip->texel_quads = (TexelQuad*)memory_allocator->allocate(sizeof(TexelQuad) * (mip_height + 1) * (mip_width + 1));
+            texture_mip->texels = (Texel*)memory_allocator->allocate(texel_size * (mip_height + 1) * (mip_width + 1));
+
             mip_width /= 2;
             mip_height /= 2;
             texture_mip++;
@@ -53,19 +56,22 @@ bool allocateMemory(Texture &texture, memory::MonotonicAllocator *memory_allocat
 }
 
 void readContent(Texture &texture, void *file) {
+    const u32 texel_size = sizeof(Texel) * (texture.flags.single ? 1 : 3);
     TextureMip *texture_mip = texture.mips;
     for (u8 mip_index = 0; mip_index < texture.mip_count; mip_index++, texture_mip++) {
         os::readFromFile(&texture_mip->width,  sizeof(u32), file);
         os::readFromFile(&texture_mip->height, sizeof(u32), file);
-        os::readFromFile(texture_mip->texel_quads, sizeof(TexelQuad) * (texture_mip->width + 1) * (texture_mip->height + 1), file);
+        os::readFromFile(texture_mip->texels, texel_size * (texture_mip->width + 1) * (texture_mip->height + 1), file);
     }
 }
+
 void writeContent(const Texture &texture, void *file) {
+    const u32 texel_size = sizeof(Texel) * (texture.flags.single ? 1 : 3);
     TextureMip *texture_mip = texture.mips;
     for (u8 mip_index = 0; mip_index < texture.mip_count; mip_index++, texture_mip++) {
         os::writeToFile(&texture_mip->width,  sizeof(u32), file);
         os::writeToFile(&texture_mip->height, sizeof(u32), file);
-        os::writeToFile(texture_mip->texel_quads, sizeof(TexelQuad) * (texture_mip->width + 1) * (texture_mip->height + 1), file);
+        os::writeToFile(texture_mip->texels, texel_size * (texture_mip->width + 1) * (texture_mip->height + 1), file);
     }
 }
 

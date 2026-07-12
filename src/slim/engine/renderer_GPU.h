@@ -23,7 +23,7 @@ Slice<Circle> t_columns;
 Slice<TileEdge> t_edges;
 DeviceHits t_hits;
 TextureMip *t_texture_mips;
-TexelQuad *t_texel_quads;
+Texel *t_texels;
 u32* t_window_content;
 
 __global__ void d_generateWallHits(RayCast raycast, const f32 rounded_corners_radius) {
@@ -90,17 +90,18 @@ void initDataOnGPU(const RenderData& render_data) {
     uploadConstant(&t_window_content, d_window_content)
 
     u32 total_mip_count = 0;
-    u32 total_texel_quads_count = 0;
+    u32 total_texel_count = 0;
     const Texture *texture = render_data.textures;
     for (u32 i = 0; i < render_data.texture_count; i++, texture++) {
         total_mip_count += texture->mip_count;
         TextureMip *mip = texture->mips;
+        const u8 channel_count = texture->flags.single ? 1 : 3;
         for (u32 m = 0; m < texture->mip_count; m++, mip++)
-            total_texel_quads_count += (mip->width + 1) * (mip->height + 1);
+            total_texel_count += (mip->width + 1) * (mip->height + 1) * channel_count;
     }
     gpuErrchk(cudaMalloc(&t_render_data.textures,  sizeof(Texture) * render_data.texture_count))
     gpuErrchk(cudaMalloc(&t_texture_mips,   sizeof(TextureMip) * total_mip_count))
-    gpuErrchk(cudaMalloc(&t_texel_quads,    sizeof(TexelQuad)  * total_texel_quads_count))
+    gpuErrchk(cudaMalloc(&t_texels,    sizeof(Texel) * total_texel_count))
     gpuErrchk(cudaMalloc(&t_hits.wall_hits,   sizeof(WallHitGroup) * MAX_WALL_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_hits.ground_hits,    sizeof(GroundHit)  * MAX_GROUND_HITS_COUNT))
     gpuErrchk(cudaMalloc(&t_edges.data,    sizeof(TileEdge)  * MAX_TILE_MAP_EDGES))
@@ -110,12 +111,13 @@ void initDataOnGPU(const RenderData& render_data) {
     uploadConstant(&t_edges, d_edges);
     uploadConstant(&t_columns, d_columns);
 
-    TexelQuad *d_quads = t_texel_quads;
+    Texel *d_texels = t_texels;
     TextureMip *d_mips = t_texture_mips;
     Texture *t_textures = t_render_data.textures;
     Texture t_texture;
     texture = render_data.textures;
     for (u32 i = 0; i < render_data.texture_count; i++, texture++) {
+        const u8 channel_count = texture->flags.single ? 1 : 3;
         t_texture = *texture;
         t_texture.mips = d_mips;
         uploadN(&t_texture, t_textures, 1)
@@ -123,12 +125,12 @@ void initDataOnGPU(const RenderData& render_data) {
 
         for (u32 m = 0; m < texture->mip_count; m++) {
             TextureMip mip = texture->mips[m];
-            u32 quad_count = (mip.width + 1) * (mip.height + 1);
-            uploadN( mip.texel_quads, d_quads, quad_count)
+            u32 texel_count = (mip.width + 1) * (mip.height + 1) * channel_count;
+            uploadN( mip.texels, d_texels, texel_count)
 
-            mip.texel_quads = d_quads;
+            mip.texels = d_texels;
             uploadN(&mip, d_mips, 1)
-            d_quads += quad_count;
+            d_texels += texel_count;
             d_mips++;
         }
     }

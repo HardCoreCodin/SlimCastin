@@ -319,6 +319,7 @@ struct TileMap : Grid<Tile> {
 						}
 						break;
 					}
+					default: break;
 				}
 		}
 	}

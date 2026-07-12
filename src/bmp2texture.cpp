@@ -249,13 +249,13 @@ int main(int argc, char *argv[]) {
         else if (argv[i][0] == '-' && argv[i][1] == 'w') texture.flags.wrap = true;
         else if (argv[i][0] == '-' && argv[i][1] == 'n') texture.flags.normal = true;
         else if (argv[i][0] == '-' && argv[i][1] == 'c') texture.flags.cubemap = true;
+        else if (argv[i][0] == '-' && argv[i][1] == 's') texture.flags.single = true;
         else return 0;
     }
 
     u8* components = loadBitmap(bitmap_file_path, texture);
     TextureMipLoader *loader_mips = nullptr;
 
-    texture.flags.channel = false;
     if (texture.flags.cubemap) {
         texture.flags.wrap = false;
         texture.flags.normal = false;
@@ -326,31 +326,33 @@ int main(int argc, char *argv[]) {
     texture.mips = new TextureMip[texture.mip_count];
     TextureMip *mip = texture.mips;
     TextureMipLoader *loader_mip = loader_mips;
+    const u8 channel_count = texture.flags.single ? 1 : 3;
     for (u16 i = 0; i < texture.mip_count; i++, mip++, loader_mip++) {
+        u32 texel_quads_count = (u32)(mip->width + 1) * (u32)(mip->height + 1);
         mip->width  = loader_mip->width;
         mip->height = loader_mip->height;
-        mip->texel_quads = new TexelQuad[(mip->width + 1) * (mip->height + 1)];
-
-        TexelQuad *texel_quad = mip->texel_quads;
+        mip->texels = new Texel[texel_quads_count * channel_count];
+        Texel* texel = mip->texels;
         PixelQuad *loader_texel_quad = loader_mip->texel_quads;
-        u32 texel_quads_count = (u32)(mip->width + 1) * (u32)(mip->height + 1);
-        for (u32 t = 0; t < texel_quads_count; t++, texel_quad++, loader_texel_quad++) {
-            texel_quad->R.TL = (u8)(loader_texel_quad->TL.color.r * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->G.TL = (u8)(loader_texel_quad->TL.color.g * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->B.TL = (u8)(loader_texel_quad->TL.color.b * FLOAT_TO_COLOR_COMPONENT);
+        for (u32 t = 0; t < texel_quads_count; t++, loader_texel_quad++) {
+            texel->TL = (u8)(loader_texel_quad->TL.color.r * FLOAT_TO_COLOR_COMPONENT);
+            texel->TR = (u8)(loader_texel_quad->TR.color.r * FLOAT_TO_COLOR_COMPONENT);
+            texel->BL = (u8)(loader_texel_quad->BL.color.r * FLOAT_TO_COLOR_COMPONENT);
+            texel->BR = (u8)(loader_texel_quad->BR.color.r * FLOAT_TO_COLOR_COMPONENT);
+            texel++;
 
-            texel_quad->R.TR = (u8)(loader_texel_quad->TR.color.r * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->G.TR = (u8)(loader_texel_quad->TR.color.g * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->B.TR = (u8)(loader_texel_quad->TR.color.b * FLOAT_TO_COLOR_COMPONENT);
-
-            texel_quad->R.BL = (u8)(loader_texel_quad->BL.color.r * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->G.BL = (u8)(loader_texel_quad->BL.color.g * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->B.BL = (u8)(loader_texel_quad->BL.color.b * FLOAT_TO_COLOR_COMPONENT);
-
-            texel_quad->R.BR = (u8)(loader_texel_quad->BR.color.r * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->G.BR = (u8)(loader_texel_quad->BR.color.g * FLOAT_TO_COLOR_COMPONENT);
-            texel_quad->B.BR = (u8)(loader_texel_quad->BR.color.b * FLOAT_TO_COLOR_COMPONENT);
-
+            if (!texture.flags.single) {
+                texel->TL = (u8)(loader_texel_quad->TL.color.g * FLOAT_TO_COLOR_COMPONENT);
+                texel->TR = (u8)(loader_texel_quad->TR.color.g * FLOAT_TO_COLOR_COMPONENT);
+                texel->BL = (u8)(loader_texel_quad->BL.color.g * FLOAT_TO_COLOR_COMPONENT);
+                texel->BR = (u8)(loader_texel_quad->BR.color.g * FLOAT_TO_COLOR_COMPONENT);
+                texel++;
+                texel->TL = (u8)(loader_texel_quad->TL.color.b * FLOAT_TO_COLOR_COMPONENT);
+                texel->TR = (u8)(loader_texel_quad->TR.color.b * FLOAT_TO_COLOR_COMPONENT);
+                texel->BL = (u8)(loader_texel_quad->BL.color.b * FLOAT_TO_COLOR_COMPONENT);
+                texel->BR = (u8)(loader_texel_quad->BR.color.b * FLOAT_TO_COLOR_COMPONENT);
+                texel++;
+            }
         }
     }
 

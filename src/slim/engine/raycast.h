@@ -181,6 +181,7 @@ struct WallHit {
                 case Facing::Up   : hit_normal.y = -1.0f; break;
                 case Facing::Left : hit_normal.x = -1.0f; break;
                 case Facing::Right: hit_normal.x =  1.0f; break;
+                default: break;
             }
         } else {
             corner_fraction = ray_hit.corner_fraction;;

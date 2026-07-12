@@ -150,6 +150,7 @@ struct PixelShader {
             case Facing::Up   : flat_wall = {  -view_dir.x, -view_dir.y}; break;
             case Facing::Left : flat_wall = { view_dir.z, -view_dir.y}; break;
             case Facing::Right: flat_wall = {-view_dir.z, -view_dir.y}; break;
+            default: break;
         }
 
         vec2 column{
@@ -166,8 +167,8 @@ struct PixelShader {
     }
 
     INLINE_XPU f32 parallaxOcclusionMap(const WallHit& wall_hit, bool check_silhouette = true) {
-        const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[mip_level]};
-        f32 curr_depth_map_value = depth_texture.sampleColor(u, v).r;
+        const Texture& depth_texture{render_data.textures[texture_id + 4]};
+        f32 curr_depth_map_value = depth_texture.sampleFloat(u, v, mip_level);
         if (curr_depth_map_value == 0.0f)
             return 0.0f;
 
@@ -189,6 +190,7 @@ struct PixelShader {
                 silhouette_factor *= corner_fraction * render_state.rounded_corners_scale;
                 circle_uv_scale = 0.25f * pi * render_state.rounded_corners_scale;
                 break;
+            default: break;
         }
 
         // calculate the size of each layer
@@ -237,7 +239,7 @@ struct PixelShader {
             }
 
             // get depthmap value at current texture coordinates
-            curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
+            curr_depth_map_value = depth_texture.sampleFloat(uv.x, uv.y, mip_level);
 
             // get depth of next layer
             curr_layer_depth += layer_height;
@@ -585,7 +587,7 @@ struct PixelShader {
         Color pixel = Magenta;
         if (render_state.render_mode == RenderMode_Beauty ||
             render_state.render_mode == RenderMode_Color)
-            pixel = render_data.textures[texture_id].mips[mip_level].sampleColor(u, v);
+            pixel = render_data.textures[texture_id].sampleColor(u, v, mip_level);
         else if (render_state.render_mode == RenderMode_Light)
             pixel = White;
 
@@ -594,14 +596,14 @@ struct PixelShader {
             (render_state.render_mode == RenderMode_Roughness ||
              render_state.render_mode == RenderMode_Beauty ||
              render_state.render_mode == RenderMode_Light)) {
-            roughness = render_data.textures[texture_id + 1].mips[mip_level].sampleColor(u, v).r;
+            roughness = render_data.textures[texture_id + 1].sampleFloat(u, v, mip_level);
         }
         N = {0.0f, 0.0f, 1.0f};
         const bool normalNeeded = render_state.render_mode == RenderMode_Beauty ||
                                   render_state.render_mode == RenderMode_Normal ||
                                   render_state.render_mode == RenderMode_Light;
         if (normalNeeded && (render_state.flags & USE_NORMAL_MAP))
-            N = vec3{render_data.textures[texture_id + 2].mips[mip_level].sampleColor(u, v)}.scaleAdd(2.0f, -1.0f).normalized();
+            N = vec3{render_data.textures[texture_id + 2].sampleColor(u, v, mip_level)}.scaleAdd(2.0f, -1.0f).normalized();
 
         if (portal && normalNeeded && portal_render_data.distance_fraction < ((0.4f * (3.0f / 4.0f)))) {
             switch (wall_hit.facing) {
@@ -609,6 +611,7 @@ struct PixelShader {
                 case Facing::Up   : PortalToP = {  -PortalToP.x, PortalToP.y, sqrt(PortalToP.x*PortalToP.x + PortalToP.y*PortalToP.y) - 1.0f}; break;
                 case Facing::Left : PortalToP = {-PortalToP.z, PortalToP.y, 1.0f - sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y)}; break;
                 case Facing::Right: PortalToP = { PortalToP.z, PortalToP.y, sqrt(PortalToP.z*PortalToP.z + PortalToP.y*PortalToP.y) - 1.0f}; break;
+                default: break;
             }
 
             f32 bump = portal_render_data.distance_fraction / (0.4f * (3.0f / 4.0f));
@@ -646,6 +649,7 @@ struct PixelShader {
                         case Facing::Up   : N = {  -N.x,   N.y,   -N.z}; break;
                         case Facing::Left : N = {-N.z,   N.y,  N.x}; break;
                         case Facing::Right: N = { N.z,   N.y, -N.x}; break;
+                        default: break;
                     }
             }
 
@@ -654,7 +658,7 @@ struct PixelShader {
             (render_state.render_mode == RenderMode_AO ||
              render_state.render_mode == RenderMode_Beauty ||
              render_state.render_mode == RenderMode_Light)) {
-            AO = render_data.textures[texture_id + 3].mips[mip_level].sampleColor(u, v).r;
+            AO = render_data.textures[texture_id + 3].sampleFloat(u, v, mip_level);
             AO *= AO;
             AO *= AO;
         }
@@ -746,7 +750,7 @@ struct PixelShader {
                                 continue;
 
                             if ((render_state.flags & PARALLAX_OCCLUSION) && parallax_occlusion_depth > 0.0f) {
-                                const TextureMip& depth_texture{render_data.textures[texture_id + 4].mips[mip_level]};
+                                const Texture& depth_texture{render_data.textures[texture_id + 4]};
 
                                 // calculate the size of each layer
                                 f32 layer_height = 1.0f / lerp(32.0f, 8.0f, clampedValue(hitN.dot(L)));
@@ -765,7 +769,7 @@ struct PixelShader {
                                     uv += d_uv;
                                     prev_layer_depth = curr_layer_depth;
                                     prev_depth_map_value = curr_depth_map_value;
-                                    curr_depth_map_value = depth_texture.sampleColor(uv.x, uv.y).r;
+                                    curr_depth_map_value = depth_texture.sampleFloat(uv.x, uv.y, mip_level);
                                     curr_layer_depth -= layer_height;
                                 }
 
@@ -834,11 +838,11 @@ struct PixelShader {
             }
         }
 
-        if (render_state.edit == Edit::Walls &&
-            ((i32)ground_hit_position.x == (i32)render_state.hovered_pos.x &&
-             (i32)ground_hit_position.y == (i32)render_state.hovered_pos.y) ||
-            (render_state.edit == Edit::Columns || render_state.edit == Edit::Enemies) &&
-            (ground_hit_position - render_state.hovered_pos).squaredLength() < (render_state.edit == Edit::Enemies ? 0.15f : 0.02f)) {
+        if ((render_state.edit == Edit::Walls &&
+             ((i32)ground_hit_position.x == (i32)render_state.hovered_pos.x &&
+              (i32)ground_hit_position.y == (i32)render_state.hovered_pos.y)) ||
+            ((render_state.edit == Edit::Columns || render_state.edit == Edit::Enemies) &&
+             (ground_hit_position - render_state.hovered_pos).squaredLength() < (render_state.edit == Edit::Enemies ? 0.15f : 0.02f))) {
             pixel = pixel.lerpTo(Color(render_state.edit == Edit::Enemies ? Magenta : (render_state.edit == Edit::Walls ? Cyan : Yellow)), 0.02f);
         }
 

@@ -774,6 +774,7 @@ struct Engine {
 
                 break;
             }
+            default: break;
         }
     }
 };
